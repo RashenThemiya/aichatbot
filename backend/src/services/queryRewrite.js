@@ -4,34 +4,72 @@ const config = require("../config");
 const REWRITE_TIMEOUT_MS = 15000;
 const isDev = process.env.NODE_ENV !== "production";
 
-function logRewrite(original, corrected, reason) {
+const SMALL_TALK_INTENTS = new Set(["greeting", "thanks", "goodbye"]);
+
+const SYSTEM_PROMPT = `You classify and preprocess customer messages for a support chatbot.
+
+Return JSON only with this exact shape:
+{
+  "intent": "greeting" | "thanks" | "goodbye" | "support_question",
+  "reply": "short friendly reply for greeting/thanks/goodbye, otherwise null",
+  "correctedQuestion": "spelling-corrected question for support_question, otherwise null"
+}
+
+Rules:
+- Use greeting, thanks, or goodbye ONLY when the message is purely social with no support question.
+- If the message mixes small talk with a real question (e.g. "hi how do I reset password"), use support_question.
+- For support_question, fix spelling and grammar in correctedQuestion while keeping the meaning.
+- reply must be one short friendly sentence for greeting, thanks, or goodbye.
+- Do not answer support questions in reply; only set correctedQuestion.`;
+
+function logAnalyze(original, result, reason) {
   if (!isDev) return;
   if (reason) {
     console.log(`[queryRewrite] ${reason}: "${original}"`);
-    return;
   }
-  if (corrected === original) {
-    console.log(`[queryRewrite] unchanged: "${original}"`);
-    return;
-  }
-  console.log(`[queryRewrite] original:  "${original}"`);
-  console.log(`[queryRewrite] corrected: "${corrected}"`);
 }
 
-const SYSTEM_PROMPT = `You fix spelling and grammar in customer support questions.
-Rules:
-- Keep the original meaning and intent.
-- Do not add new information or answer the question.
-- Return only the corrected question as plain text.
-- If the text is already correct, return it unchanged.`;
+function parseAnalyzeResponse(content, original) {
+  if (!content) {
+    return { intent: "support_question", reply: null, correctedQuestion: original };
+  }
 
-async function rewriteUserQuery(message) {
+  try {
+    const parsed = JSON.parse(content);
+    const intent = SMALL_TALK_INTENTS.has(parsed.intent)
+      ? parsed.intent
+      : "support_question";
+
+    if (intent !== "support_question") {
+      return {
+        intent,
+        reply: String(parsed.reply || "").trim() || null,
+        correctedQuestion: null,
+      };
+    }
+
+    const correctedQuestion =
+      String(parsed.correctedQuestion || "").trim() || original;
+
+    return {
+      intent: "support_question",
+      reply: null,
+      correctedQuestion,
+    };
+  } catch {
+    return { intent: "support_question", reply: null, correctedQuestion: original };
+  }
+}
+
+async function analyzeUserMessage(message) {
   const original = String(message || "").trim();
-  if (!original) return original;
+  if (!original) {
+    return { intent: "support_question", reply: null, correctedQuestion: original };
+  }
 
   if (!config.openaiApiKey) {
-    logRewrite(original, original, "skipped (no OPENAI_API_KEY)");
-    return original;
+    logAnalyze(original, null, "skipped AI analyze (no OPENAI_API_KEY)");
+    return { intent: "support_question", reply: null, correctedQuestion: original };
   }
 
   try {
@@ -40,6 +78,7 @@ async function rewriteUserQuery(message) {
       {
         model: config.openaiChatModel,
         temperature: 0,
+        response_format: { type: "json_object" },
         messages: [
           { role: "system", content: SYSTEM_PROMPT },
           { role: "user", content: original },
@@ -54,14 +93,21 @@ async function rewriteUserQuery(message) {
       }
     );
 
-    const corrected = data?.choices?.[0]?.message?.content?.trim();
-    const result = corrected || original;
-    logRewrite(original, result);
-    return result;
+    const content = data?.choices?.[0]?.message?.content?.trim();
+    return parseAnalyzeResponse(content, original);
   } catch (err) {
-    logRewrite(original, original, `fallback to original (${err.message || "rewrite failed"})`);
-    return original;
+    logAnalyze(
+      original,
+      null,
+      `fallback to original (${err.message || "analyze failed"})`
+    );
+    return { intent: "support_question", reply: null, correctedQuestion: original };
   }
 }
 
-module.exports = { rewriteUserQuery };
+async function rewriteUserQuery(message) {
+  const analyzed = await analyzeUserMessage(message);
+  return analyzed.correctedQuestion || String(message || "").trim();
+}
+
+module.exports = { analyzeUserMessage, rewriteUserQuery };

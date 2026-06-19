@@ -5,7 +5,7 @@ const Company = require("../../models/Company");
 const Conversation = require("../../models/Conversation");
 const WhatsAppIntegration = require("../../models/WhatsAppIntegration");
 const ragClient = require("../../services/ragClient");
-const { rewriteUserQuery } = require("../../services/queryRewrite");
+const { preprocessUserMessage } = require("../../services/messagePreprocessor");
 
 function assertGraphConfig() {
   if (!config.graphApiVersion) {
@@ -148,11 +148,27 @@ async function createRagReply(incomingMessage) {
 
   conversation.messages.push({ role: "user", content: question });
 
-  const ragQuestion = await rewriteUserQuery(question);
+  const preprocessed = await preprocessUserMessage(question);
+
+  if (preprocessed.type === "small_talk") {
+    conversation.messages.push({
+      role: "assistant",
+      content: preprocessed.reply,
+    });
+    await conversation.save();
+
+    return {
+      answer: preprocessed.reply,
+      sources: [],
+      conversationId: conversation._id,
+      sessionId,
+      integration,
+    };
+  }
 
   const ragResult = await ragClient.queryKnowledge({
     companyId: company._id.toString(),
-    question: ragQuestion,
+    question: preprocessed.question,
   });
 
   const sources = mapSources(ragResult.sources);
