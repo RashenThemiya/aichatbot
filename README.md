@@ -70,6 +70,29 @@ Backend: `http://localhost:3000`
 RAG service: `http://localhost:8000`  
 RAG API docs: `http://localhost:8000/docs`
 
+## Docker
+
+Run both backend and RAG service with Docker Compose:
+
+```powershell
+cd C:\Users\Rashen\Desktop\github\RAG-System
+docker compose up --build
+```
+
+Build and push Docker Hub images:
+
+```powershell
+docker login
+
+docker build -t mhartvishwajith448/rag-backend:latest ./backend
+docker build -t mhartvishwajith448/rag-service:latest ./rag-service
+
+docker push mhartvishwajith448/rag-backend:latest
+docker push mhartvishwajith448/rag-service:latest
+```
+
+More Docker details are in `DOCKER.md`.
+
 ## API Usage
 
 ### Health check
