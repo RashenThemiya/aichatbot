@@ -8,4 +8,7 @@ module.exports = {
   jwtSecret: process.env.JWT_SECRET || "change-this-dev-secret",
   superAdminEmail: process.env.SUPER_ADMIN_EMAIL || "admin@example.com",
   superAdminPassword: process.env.SUPER_ADMIN_PASSWORD || "admin123",
+  graphApiVersion: process.env.GRAPH_API_VERSION || "v20.0",
+  whatsappVerifyToken: process.env.WHATSAPP_VERIFY_TOKEN,
+  whatsappTokenEncryptionKey: process.env.WHATSAPP_TOKEN_ENCRYPTION_KEY,
 };
