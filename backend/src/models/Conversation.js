@@ -44,7 +44,7 @@ const conversationSchema = new mongoose.Schema(
     customerPhone: { type: String, default: "" },
     channel: {
       type: String,
-      enum: ["web", "sms", "voice"],
+      enum: ["web", "sms", "voice", "whatsapp"],
       default: "web",
     },
     messages: {

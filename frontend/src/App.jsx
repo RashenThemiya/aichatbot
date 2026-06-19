@@ -21,6 +21,11 @@ import { api, formatDate } from "./lib/api";
 import { getAuthToken, setAuthToken } from "./lib/api";
 
 const emptyCompanyForm = { name: "", slug: "", description: "" };
+const emptyWhatsAppForm = {
+  phoneNumberId: "",
+  accessToken: "",
+  isActive: true,
+};
 const emptyLoginForm = { email: "admin@example.com", password: "admin123" };
 const emptyAdminForm = {
   name: "",
@@ -160,6 +165,9 @@ export default function App() {
   const [widgetTestMessages, setWidgetTestMessages] = useState([
     { role: "assistant", content: "Hi, how can I help?" },
   ]);
+  const [whatsappIntegration, setWhatsappIntegration] = useState(null);
+  const [whatsappForm, setWhatsappForm] = useState(emptyWhatsAppForm);
+  const [whatsappValidation, setWhatsappValidation] = useState(null);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState({
@@ -169,6 +177,7 @@ export default function App() {
     upload: false,
     chat: false,
     widgetTest: false,
+    whatsapp: false,
     conversations: false,
     auth: false,
     admins: false,
@@ -188,12 +197,14 @@ export default function App() {
     : [
         { id: "dashboard", label: "Dashboard", icon: Activity },
         { id: "documents", label: "Document Management", icon: FileText },
+        { id: "whatsapp", label: "WhatsApp Integration", icon: MessageSquare },
         { id: "history", label: "Chat History", icon: History },
         { id: "help", label: "Widget Help", icon: Search },
       ];
   const companyDashboardNav = [
     { id: "dashboard", label: "Company Dashboard", icon: Activity },
     { id: "documents", label: "Document Management", icon: FileText },
+    { id: "whatsapp", label: "WhatsApp Integration", icon: MessageSquare },
     { id: "chat", label: "Chat Test", icon: MessageSquare },
     { id: "history", label: "Chat History", icon: History },
     { id: "help", label: "Widget Help", icon: Search },
@@ -268,6 +279,37 @@ export default function App() {
     if (result) setConversations(result);
   }
 
+  async function loadWhatsAppIntegration(companyId = selectedId) {
+    if (!companyId) {
+      setWhatsappIntegration(null);
+      setWhatsappForm(emptyWhatsAppForm);
+      setWhatsappValidation(null);
+      return;
+    }
+
+    setLoading((current) => ({ ...current, whatsapp: true }));
+    setWhatsappValidation(null);
+    try {
+      const result = await api.whatsappIntegration.get(companyId);
+      const integration = Array.isArray(result) ? null : result;
+      setWhatsappIntegration(integration);
+      setWhatsappForm({
+        phoneNumberId: integration?.phoneNumberId || "",
+        accessToken: "",
+        isActive: integration?.isActive !== false,
+      });
+    } catch (err) {
+      if (String(err.message || "").toLowerCase().includes("not found")) {
+        setWhatsappIntegration(null);
+        setWhatsappForm(emptyWhatsAppForm);
+      } else {
+        setError(err.message || "Failed to load WhatsApp integration");
+      }
+    } finally {
+      setLoading((current) => ({ ...current, whatsapp: false }));
+    }
+  }
+
   async function loadAdminUsers() {
     if (!isSuperAdmin) return;
     const result = await runTask("admins", () => api.adminUsers.list());
@@ -301,6 +343,7 @@ export default function App() {
     if (selectedId) {
       loadDocuments(selectedId);
       loadConversations(selectedId);
+      loadWhatsAppIntegration(selectedId);
       setSelectedConversation(null);
       setChatResult(null);
       setWidgetKeyResult(null);
@@ -339,6 +382,9 @@ export default function App() {
     setWidgetApiKeyInput("");
     setShowWidgetPreview(false);
     setWidgetPreviewOpen(false);
+    setWhatsappIntegration(null);
+    setWhatsappForm(emptyWhatsAppForm);
+    setWhatsappValidation(null);
   }
 
   useEffect(() => {
@@ -438,6 +484,9 @@ export default function App() {
     setWidgetApiKeyInput("");
     setShowWidgetPreview(false);
     setWidgetPreviewOpen(false);
+    setWhatsappIntegration(null);
+    setWhatsappForm(emptyWhatsAppForm);
+    setWhatsappValidation(null);
   }
 
   async function handleGenerateWidgetApiKey() {
@@ -506,6 +555,76 @@ export default function App() {
         ...current,
         { role: "assistant", content: result.answer, sources: result.sources || [] },
       ]);
+    }
+  }
+
+  async function handleSaveWhatsAppIntegration(event) {
+    event.preventDefault();
+    if (!selectedCompany) return;
+
+    const phoneNumberId = whatsappForm.phoneNumberId.trim();
+    const accessToken = whatsappForm.accessToken.trim();
+
+    if (!phoneNumberId) {
+      setError("WhatsApp phone number ID is required");
+      return;
+    }
+
+    if (!whatsappIntegration && !accessToken) {
+      setError("Access token is required when creating a WhatsApp integration");
+      return;
+    }
+
+    const payload = {
+      phoneNumberId,
+      isActive: whatsappForm.isActive,
+    };
+    if (accessToken) payload.accessToken = accessToken;
+
+    const result = await runTask(
+      "whatsapp",
+      () => api.whatsappIntegration.save(selectedCompany._id, payload, Boolean(whatsappIntegration)),
+      whatsappIntegration ? "WhatsApp integration updated" : "WhatsApp integration saved"
+    );
+
+    if (result) {
+      setWhatsappIntegration(result);
+      setWhatsappForm({
+        phoneNumberId: result.phoneNumberId || phoneNumberId,
+        accessToken: "",
+        isActive: result.isActive !== false,
+      });
+      setWhatsappValidation(null);
+    }
+  }
+
+  async function handleValidateWhatsAppIntegration() {
+    if (!selectedCompany) return;
+
+    const result = await runTask(
+      "whatsapp",
+      () => api.whatsappIntegration.validate(selectedCompany._id),
+      "WhatsApp integration validated"
+    );
+
+    if (result) setWhatsappValidation(result);
+  }
+
+  async function handleDeleteWhatsAppIntegration() {
+    if (!selectedCompany || !whatsappIntegration) return;
+    const ok = window.confirm("Delete this WhatsApp integration?");
+    if (!ok) return;
+
+    const result = await runTask(
+      "whatsapp",
+      () => api.whatsappIntegration.remove(selectedCompany._id),
+      "WhatsApp integration deleted"
+    );
+
+    if (result) {
+      setWhatsappIntegration(null);
+      setWhatsappForm(emptyWhatsAppForm);
+      setWhatsappValidation(null);
     }
   }
 
@@ -1245,6 +1364,162 @@ export default function App() {
                   </form>
                 )}
               </section>
+              )}
+
+              {activeSection === "whatsapp" && (
+                <section className="rounded border border-slate-200 bg-white">
+                  <div className="flex flex-col gap-3 border-b border-slate-200 px-4 py-3 md:flex-row md:items-center md:justify-between">
+                    <div className="flex items-center gap-2">
+                      <MessageSquare size={18} />
+                      <h2 className="font-semibold text-slate-950">WhatsApp Integration</h2>
+                      {whatsappIntegration && (
+                        <StatusBadge status={whatsappIntegration.isActive ? "active" : "inactive"} />
+                      )}
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <IconButton title="Refresh WhatsApp integration" onClick={() => loadWhatsAppIntegration()}>
+                        <RefreshCcw size={16} />
+                      </IconButton>
+                      <SecondaryButton
+                        onClick={handleValidateWhatsAppIntegration}
+                        disabled={!whatsappIntegration || loading.whatsapp}
+                      >
+                        {loading.whatsapp ? <Loader2 className="animate-spin" size={16} /> : <CheckCircle2 size={16} />}
+                        Validate
+                      </SecondaryButton>
+                      {whatsappIntegration && (
+                        <SecondaryButton
+                          className="text-rose-700 hover:bg-rose-50"
+                          onClick={handleDeleteWhatsAppIntegration}
+                          disabled={loading.whatsapp}
+                        >
+                          <Trash2 size={16} />
+                          Delete
+                        </SecondaryButton>
+                      )}
+                    </div>
+                  </div>
+                  <div className="grid gap-4 p-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+                    <form className="space-y-4" onSubmit={handleSaveWhatsAppIntegration}>
+                      <div className="grid gap-4 md:grid-cols-2">
+                        <Field label="WhatsApp phone number ID">
+                          <TextInput
+                            value={whatsappForm.phoneNumberId}
+                            onChange={(event) =>
+                              setWhatsappForm((current) => ({
+                                ...current,
+                                phoneNumberId: event.target.value,
+                              }))
+                            }
+                            placeholder="1175322778994139"
+                            required
+                          />
+                        </Field>
+                        <Field label="Status">
+                          <label className="flex h-10 items-center gap-3 rounded border border-slate-200 bg-white px-3 text-sm text-slate-700">
+                            <input
+                              type="checkbox"
+                              className="h-4 w-4 rounded border-slate-300"
+                              checked={whatsappForm.isActive}
+                              onChange={(event) =>
+                                setWhatsappForm((current) => ({
+                                  ...current,
+                                  isActive: event.target.checked,
+                                }))
+                              }
+                            />
+                            Active for this company
+                          </label>
+                        </Field>
+                      </div>
+                      <Field label={whatsappIntegration ? "New access token optional" : "Access token"}>
+                        <TextArea
+                          value={whatsappForm.accessToken}
+                          onChange={(event) =>
+                            setWhatsappForm((current) => ({
+                              ...current,
+                              accessToken: event.target.value,
+                            }))
+                          }
+                          placeholder={
+                            whatsappIntegration
+                              ? "Paste a new Meta access token only when rotating"
+                              : "Paste Meta WhatsApp Cloud API access token"
+                          }
+                          required={!whatsappIntegration}
+                        />
+                      </Field>
+                      <div className="flex flex-wrap gap-2">
+                        <PrimaryButton type="submit" disabled={loading.whatsapp}>
+                          {loading.whatsapp ? <Loader2 className="animate-spin" size={16} /> : <CheckCircle2 size={16} />}
+                          {whatsappIntegration ? "Update Integration" : "Save Integration"}
+                        </PrimaryButton>
+                        <SecondaryButton
+                          onClick={() => {
+                            setWhatsappForm({
+                              phoneNumberId: whatsappIntegration?.phoneNumberId || "",
+                              accessToken: "",
+                              isActive: whatsappIntegration?.isActive !== false,
+                            });
+                            setWhatsappValidation(null);
+                          }}
+                        >
+                          Reset
+                        </SecondaryButton>
+                      </div>
+                    </form>
+
+                    <aside className="space-y-3">
+                      <div className="rounded border border-slate-200 bg-slate-50 p-4">
+                        <div className="text-sm font-semibold text-slate-900">Saved credential</div>
+                        <dl className="mt-3 space-y-3 text-sm">
+                          <div>
+                            <dt className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                              Phone number ID
+                            </dt>
+                            <dd className="mt-1 break-all text-slate-800">
+                              {whatsappIntegration?.phoneNumberId || "Not configured"}
+                            </dd>
+                          </div>
+                          <div>
+                            <dt className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                              Token preview
+                            </dt>
+                            <dd className="mt-1 text-slate-800">
+                              {whatsappIntegration?.accessTokenLast4
+                                ? `Ends with ${whatsappIntegration.accessTokenLast4}`
+                                : "Not saved"}
+                            </dd>
+                          </div>
+                          <div>
+                            <dt className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                              Updated
+                            </dt>
+                            <dd className="mt-1 text-slate-800">
+                              {formatDate(whatsappIntegration?.updatedAt)}
+                            </dd>
+                          </div>
+                        </dl>
+                      </div>
+
+                      {whatsappValidation && (
+                        <div className="rounded border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">
+                          <div className="font-semibold">Validation passed</div>
+                          <div className="mt-2 text-xs leading-5">
+                            {whatsappValidation.metaPhoneNumber?.display_phone_number ||
+                              whatsappValidation.metaPhoneNumber?.id ||
+                              whatsappValidation.phoneNumberId}
+                          </div>
+                          {whatsappValidation.metaPhoneNumber?.quality_rating && (
+                            <div className="mt-1 text-xs">
+                              Quality: {whatsappValidation.metaPhoneNumber.quality_rating}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </aside>
+                  </div>
+                </section>
               )}
 
               {isSuperAdmin && activeSection === "admins" && (

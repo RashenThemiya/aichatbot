@@ -153,6 +153,60 @@ curl http://localhost:3000/api/companies/COMPANY_ID/chat/conversations
 curl http://localhost:3000/api/companies/COMPANY_ID/chat/history/SESSION_ID
 ```
 
+### Configure WhatsApp for a company
+
+Store the Meta WhatsApp Cloud API credentials per company. The access token is encrypted before it is saved in MongoDB.
+
+```bash
+curl -X POST http://localhost:3000/api/companies/COMPANY_ID/whatsapp-integration \
+  -H "Content-Type: application/json" \
+  -d "{\"phoneNumberId\": \"1175322778994139\", \"accessToken\": \"META_ACCESS_TOKEN\"}"
+```
+
+Read, update, or delete the saved integration:
+
+```bash
+curl http://localhost:3000/api/companies/COMPANY_ID/whatsapp-integration
+
+curl -X PUT http://localhost:3000/api/companies/COMPANY_ID/whatsapp-integration \
+  -H "Content-Type: application/json" \
+  -d "{\"isActive\": true}"
+
+curl -X POST http://localhost:3000/api/companies/COMPANY_ID/whatsapp-integration/validate
+
+curl -X DELETE http://localhost:3000/api/companies/COMPANY_ID/whatsapp-integration
+```
+
+### WhatsApp manual send
+
+After saving the company WhatsApp integration, send a text message through Meta WhatsApp Cloud API:
+
+```bash
+curl -X POST http://localhost:3000/api/whatsapp/send \
+  -H "Content-Type: application/json" \
+  -d "{\"companyId\": \"COMPANY_ID\", \"to\": \"94771234567\", \"text\": \"Hello from the support chatbot\"}"
+```
+
+Postman test request:
+
+- Method: `POST`
+- URL: `http://localhost:3000/api/whatsapp/send`
+- Headers: `Content-Type: application/json`
+- Body:
+
+```json
+{
+  "companyId": "COMPANY_ID",
+  "to": "94771234567",
+  "text": "Hello from the support chatbot"
+}
+```
+
+For Meta webhook setup, use `GET /api/whatsapp/webhook` as the callback verification endpoint and `POST /api/whatsapp/webhook` for incoming WhatsApp messages.
+
+Incoming WhatsApp messages are matched to the company by the `phone_number_id` sent in the Meta webhook payload. Create a company first, upload documents for that company, save its WhatsApp integration, then run both the backend and RAG service.
+
+
 ## API Endpoints Summary
 
 | Method | Endpoint | Description |
@@ -168,6 +222,11 @@ curl http://localhost:3000/api/companies/COMPANY_ID/chat/history/SESSION_ID
 | POST | `/api/companies/:id/chat` | Ask question |
 | GET | `/api/companies/:id/chat/conversations` | List sessions |
 | GET | `/api/companies/:id/chat/history/:sessionId` | Full conversation |
+| POST | `/api/companies/:id/whatsapp-integration` | Create or replace company WhatsApp credentials |
+| GET/PUT/DELETE | `/api/companies/:id/whatsapp-integration` | Manage company WhatsApp integration |
+| GET | `/api/whatsapp/webhook` | Verify Meta WhatsApp webhook |
+| POST | `/api/whatsapp/webhook` | Receive WhatsApp webhook messages |
+| POST | `/api/whatsapp/send` | Send a WhatsApp text message |
 
 ## Python RAG service (direct)
 
@@ -206,6 +265,9 @@ curl http://localhost:3000/api/companies/COMPANY_ID/chat/history/SESSION_ID
 | `MONGODB_URI` | `mongodb://localhost:27017/rag_chatbot` | MongoDB connection |
 | `RAG_SERVICE_URL` | `http://localhost:8000` | Python service URL |
 | `UPLOAD_DIR` | `./uploads` | PDF storage |
+| `GRAPH_API_VERSION` | `v20.0` | Meta Graph API version |
+| `WHATSAPP_VERIFY_TOKEN` | - | Custom webhook verification token |
+| `WHATSAPP_TOKEN_ENCRYPTION_KEY` | - | Long secret used to encrypt company WhatsApp access tokens in MongoDB |
 
 ## Next steps (future phases)
 
