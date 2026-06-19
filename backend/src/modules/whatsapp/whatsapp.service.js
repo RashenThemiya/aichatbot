@@ -5,6 +5,7 @@ const Company = require("../../models/Company");
 const Conversation = require("../../models/Conversation");
 const WhatsAppIntegration = require("../../models/WhatsAppIntegration");
 const ragClient = require("../../services/ragClient");
+const { rewriteUserQuery } = require("../../services/queryRewrite");
 
 function assertGraphConfig() {
   if (!config.graphApiVersion) {
@@ -147,9 +148,11 @@ async function createRagReply(incomingMessage) {
 
   conversation.messages.push({ role: "user", content: question });
 
+  const ragQuestion = await rewriteUserQuery(question);
+
   const ragResult = await ragClient.queryKnowledge({
     companyId: company._id.toString(),
-    question,
+    question: ragQuestion,
   });
 
   const sources = mapSources(ragResult.sources);

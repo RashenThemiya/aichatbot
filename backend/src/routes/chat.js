@@ -5,6 +5,7 @@ const { v4: uuidv4 } = require("uuid");
 const Company = require("../models/Company");
 const Conversation = require("../models/Conversation");
 const ragClient = require("../services/ragClient");
+const { rewriteUserQuery } = require("../services/queryRewrite");
 const { canAccessCompany } = require("../middleware/auth");
 
 const router = express.Router({ mergeParams: true });
@@ -79,11 +80,14 @@ router.post("/", async (req, res) => {
       if (customerPhone) conversation.customerPhone = customerPhone;
     }
 
-    conversation.messages.push({ role: "user", content: message.trim() });
+    const originalMessage = message.trim();
+    conversation.messages.push({ role: "user", content: originalMessage });
+
+    const ragQuestion = await rewriteUserQuery(originalMessage);
 
     const ragResult = await ragClient.queryKnowledge({
       companyId: company._id.toString(),
-      question: message.trim(),
+      question: ragQuestion,
     });
 
     const sources = (ragResult.sources || []).map((s) => ({

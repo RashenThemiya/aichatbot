@@ -11,4 +11,6 @@ module.exports = {
   graphApiVersion: process.env.GRAPH_API_VERSION || "v20.0",
   whatsappVerifyToken: process.env.WHATSAPP_VERIFY_TOKEN,
   whatsappTokenEncryptionKey: process.env.WHATSAPP_TOKEN_ENCRYPTION_KEY,
+  openaiApiKey: process.env.OPENAI_API_KEY,
+  openaiChatModel: process.env.OPENAI_CHAT_MODEL || "gpt-4o-mini",
 };
