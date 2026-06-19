@@ -1,0 +1,52 @@
+const { getSmallTalkReply } = require("./smallTalk");
+const { analyzeUserMessage } = require("./queryRewrite");
+
+const isDev = process.env.NODE_ENV !== "production";
+
+function logPreprocess(original, result) {
+  if (!isDev) return;
+
+  if (result.type === "small_talk") {
+    console.log(`[messagePreprocessor] small_talk (${result.source}): "${original}"`);
+    console.log(`[messagePreprocessor] reply: "${result.reply}"`);
+    return;
+  }
+
+  if (result.question !== original) {
+    console.log(`[messagePreprocessor] support: "${original}"`);
+    console.log(`[messagePreprocessor] corrected: "${result.question}"`);
+  } else {
+    console.log(`[messagePreprocessor] support (unchanged): "${original}"`);
+  }
+}
+
+async function preprocessUserMessage(message) {
+  const original = String(message || "").trim();
+  if (!original) {
+    return { type: "empty" };
+  }
+
+  const regexReply = getSmallTalkReply(original);
+  if (regexReply) {
+    const result = { type: "small_talk", reply: regexReply, source: "regex" };
+    logPreprocess(original, result);
+    return result;
+  }
+
+  const analyzed = await analyzeUserMessage(original);
+
+  if (analyzed.intent !== "support_question" && analyzed.reply) {
+    const result = { type: "small_talk", reply: analyzed.reply, source: "ai" };
+    logPreprocess(original, result);
+    return result;
+  }
+
+  const result = {
+    type: "support",
+    question: analyzed.correctedQuestion || original,
+  };
+  logPreprocess(original, result);
+  return result;
+}
+
+module.exports = { preprocessUserMessage };
