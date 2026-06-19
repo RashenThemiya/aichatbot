@@ -1,4 +1,5 @@
 import re
+import json
 from pathlib import Path
 
 from pypdf import PdfReader
@@ -26,6 +27,51 @@ def extract_text_from_pdf(file_path: str) -> str:
     return full_text
 
 
+def _extract_api_doc_text(path: Path) -> str:
+    raw = path.read_text(encoding="utf-8", errors="ignore")
+    suffix = path.suffix.lower()
+
+    if suffix == ".json":
+        try:
+            data = json.loads(raw)
+            paths = data.get("paths") if isinstance(data, dict) else None
+            if isinstance(paths, dict) and paths:
+                endpoint_lines: list[str] = []
+                for route, methods in paths.items():
+                    if not isinstance(methods, dict):
+                        continue
+                    for method, details in methods.items():
+                        summary = ""
+                        if isinstance(details, dict):
+                            summary = details.get("summary") or details.get(
+                                "description") or ""
+                        endpoint_lines.append(
+                            f"{str(method).upper()} {route} {summary}".strip())
+                if endpoint_lines:
+                    return "\n".join(endpoint_lines)
+            return json.dumps(data, indent=2)
+        except Exception:
+            return raw
+
+    return raw
+
+
+def extract_text_from_file(file_path: str, doc_type: str = "pdf", mime_type: str = "") -> str:
+    path = Path(file_path)
+    if not path.exists():
+        raise FileNotFoundError(f"File not found: {file_path}")
+
+    suffix = path.suffix.lower()
+    looks_pdf = doc_type == "pdf" or suffix == ".pdf" or mime_type == "application/pdf"
+    if looks_pdf:
+        return extract_text_from_pdf(file_path)
+
+    text = _extract_api_doc_text(path)
+    if not text.strip():
+        raise ValueError("No extractable text found in document")
+    return text
+
+
 def _split_on_paragraphs(text: str) -> list[str]:
     paragraphs = re.split(r"\n\s*\n", text)
     return [p.strip() for p in paragraphs if p.strip()]
@@ -42,7 +88,8 @@ def chunk_text(text: str) -> list[str]:
 
     for paragraph in paragraphs:
         if len(current) + len(paragraph) + 2 <= chunk_size:
-            current = f"{current}\n\n{paragraph}".strip() if current else paragraph
+            current = f"{current}\n\n{paragraph}".strip(
+            ) if current else paragraph
         else:
             if current:
                 chunks.append(current)

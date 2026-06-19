@@ -24,6 +24,12 @@ const documentSchema = new mongoose.Schema(
       type: String,
       default: "application/pdf",
     },
+    docType: {
+      type: String,
+      enum: ["pdf", "api"],
+      default: "pdf",
+      index: true,
+    },
     fileSize: {
       type: Number,
       default: 0,
@@ -42,7 +48,7 @@ const documentSchema = new mongoose.Schema(
       default: null,
     },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 module.exports = mongoose.model("Document", documentSchema);

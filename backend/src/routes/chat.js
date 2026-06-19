@@ -4,13 +4,22 @@ const { v4: uuidv4 } = require("uuid");
 
 const Company = require("../models/Company");
 const Conversation = require("../models/Conversation");
+const LiveApiTool = require("../models/LiveApiTool");
 const ragClient = require("../services/ragClient");
+const config = require("../config");
+const {
+  executePlannedTool,
+  sanitizeToolsForPlanner,
+} = require("../services/liveApiTools");
 const { canAccessCompany } = require("../middleware/auth");
 
 const router = express.Router({ mergeParams: true });
 
 router.use((req, res, next) => {
-  if (req.baseUrl?.startsWith("/widget/") && !(req.method === "POST" && req.path === "/")) {
+  if (
+    req.baseUrl?.startsWith("/widget/") &&
+    !(req.method === "POST" && req.path === "/")
+  ) {
     return res.status(404).json({ error: "Not found" });
   }
   next();
@@ -22,16 +31,51 @@ function hashApiKey(key) {
   return crypto.createHash("sha256").update(key).digest("hex");
 }
 
+function asText(value, maxLen = 3500) {
+  const text =
+    typeof value === "string" ? value : JSON.stringify(value, null, 2);
+  return text.length > maxLen ? `${text.slice(0, maxLen)}...` : text;
+}
+
+function buildLiveContext(liveResult) {
+  if (!liveResult) return "";
+  const responseBody = liveResult.ok
+    ? asText(liveResult.response)
+    : `Live API call failed (${liveResult.status || "error"}): ${liveResult.error || "Unknown error"}`;
+
+  return [
+    "Live API Result:",
+    `Tool: ${liveResult.toolName}`,
+    `Request: ${liveResult.method} ${liveResult.url}`,
+    `Status: ${liveResult.status ?? "unknown"}`,
+    `Body: ${responseBody}`,
+  ].join("\n");
+}
+
+function liveSourceFromResult(liveResult) {
+  if (!liveResult) return [];
+  return [
+    {
+      documentId: `live_api:${liveResult.toolId}`,
+      documentName: `Live API - ${liveResult.toolName}`,
+      content: asText(liveResult.response, 280),
+      score: liveResult.ok ? 1 : 0,
+    },
+  ];
+}
+
 async function validateWidgetApiKey(req, company) {
   if (!req.baseUrl?.startsWith("/widget/")) return true;
   const apiKey = req.headers["x-widget-api-key"] || req.body.widgetApiKey;
   if (!apiKey) return false;
 
-  const companyWithKey = await Company.findById(company._id).select("+widgetApiKeyHash");
+  const companyWithKey = await Company.findById(company._id).select(
+    "+widgetApiKeyHash",
+  );
   if (!companyWithKey?.widgetApiKeyHash) return false;
   return crypto.timingSafeEqual(
     Buffer.from(companyWithKey.widgetApiKeyHash),
-    Buffer.from(hashApiKey(apiKey))
+    Buffer.from(hashApiKey(apiKey)),
   );
 }
 
@@ -81,9 +125,53 @@ router.post("/", async (req, res) => {
 
     conversation.messages.push({ role: "user", content: message.trim() });
 
-    const ragResult = await ragClient.queryKnowledge({
+    let liveResult = null;
+    const liveTools = await LiveApiTool.find({
+      companyId: company._id,
+      isEnabled: true,
+    });
+
+    if (liveTools.length) {
+      try {
+        const toolPlan = await ragClient.planLiveTool({
+          question: message.trim(),
+          tools: sanitizeToolsForPlanner(liveTools),
+        });
+
+        if (
+          toolPlan?.use_live_tool &&
+          toolPlan.tool_id &&
+          Number(toolPlan.confidence || 0) >= config.liveApiMinPlanConfidence
+        ) {
+          const selectedTool = liveTools.find(
+            (item) => item._id.toString() === toolPlan.tool_id,
+          );
+          if (selectedTool) {
+            try {
+              liveResult = await executePlannedTool(selectedTool, toolPlan);
+            } catch (execErr) {
+              liveResult = {
+                toolId: selectedTool._id.toString(),
+                toolName: selectedTool.name,
+                method: selectedTool.method,
+                url: `${selectedTool.baseUrl}${selectedTool.pathTemplate}`,
+                status: null,
+                ok: false,
+                error: execErr.message,
+                response: null,
+              };
+            }
+          }
+        }
+      } catch {
+        liveResult = null;
+      }
+    }
+
+    const ragResult = await ragClient.queryKnowledgeWithContext({
       companyId: company._id.toString(),
       question: message.trim(),
+      extraContext: buildLiveContext(liveResult),
     });
 
     const sources = (ragResult.sources || []).map((s) => ({
@@ -92,11 +180,12 @@ router.post("/", async (req, res) => {
       content: s.content,
       score: s.score,
     }));
+    const finalSources = [...sources, ...liveSourceFromResult(liveResult)];
 
     conversation.messages.push({
       role: "assistant",
       content: ragResult.answer,
-      sources,
+      sources: finalSources,
     });
 
     await conversation.save();
@@ -104,8 +193,15 @@ router.post("/", async (req, res) => {
     res.json({
       sessionId: sid,
       answer: ragResult.answer,
-      sources,
+      sources: finalSources,
       conversationId: conversation._id,
+      liveApi: liveResult
+        ? {
+            toolName: liveResult.toolName,
+            status: liveResult.status,
+            ok: liveResult.ok,
+          }
+        : null,
     });
   } catch (err) {
     const detail = err.response?.data?.detail || err.message;

@@ -10,6 +10,8 @@ from app.models.schemas import (
     IngestResponse,
     QueryRequest,
     QueryResponse,
+    ToolPlanRequest,
+    ToolPlanResponse,
 )
 from app.services.rag_engine import RAGEngine
 
@@ -38,7 +40,8 @@ def health():
 @app.post("/ingest", response_model=IngestResponse)
 def ingest_document(request: IngestRequest):
     if not settings.openai_api_key:
-        raise HTTPException(status_code=500, detail="OPENAI_API_KEY is not configured")
+        raise HTTPException(
+            status_code=500, detail="OPENAI_API_KEY is not configured")
 
     try:
         chunks = engine.ingest(
@@ -46,6 +49,8 @@ def ingest_document(request: IngestRequest):
             document_id=request.document_id,
             file_path=request.file_path,
             document_name=request.document_name,
+            mime_type=request.mime_type,
+            doc_type=request.doc_type,
         )
         return IngestResponse(
             success=True,
@@ -57,7 +62,8 @@ def ingest_document(request: IngestRequest):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Ingestion failed: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Ingestion failed: {str(e)}")
 
 
 @app.delete("/documents", response_model=DeleteResponse)
@@ -75,13 +81,28 @@ def delete_document(request: DeleteDocumentRequest):
 @app.post("/query", response_model=QueryResponse)
 def query_knowledge(request: QueryRequest):
     if not settings.openai_api_key:
-        raise HTTPException(status_code=500, detail="OPENAI_API_KEY is not configured")
+        raise HTTPException(
+            status_code=500, detail="OPENAI_API_KEY is not configured")
 
     try:
         return engine.query(
             company_id=request.company_id,
             question=request.question,
             top_k=request.top_k,
+            extra_context=request.extra_context,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Query failed: {str(e)}")
+
+
+@app.post("/tool-plan", response_model=ToolPlanResponse)
+def plan_tool(request: ToolPlanRequest):
+    if not settings.openai_api_key:
+        raise HTTPException(
+            status_code=500, detail="OPENAI_API_KEY is not configured")
+
+    try:
+        return engine.plan_tool(request)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Tool planning failed: {str(e)}")

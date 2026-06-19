@@ -1,4 +1,5 @@
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:3000";
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL || "http://localhost:3000";
 
 let authToken = localStorage.getItem("rag_admin_token") || "";
 
@@ -20,7 +21,10 @@ async function request(path, options = {}) {
     path,
     hasToken: Boolean(authToken),
   });
-  const response = await fetch(`${API_BASE_URL}${path}`, { ...options, headers });
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...options,
+    headers,
+  });
   const contentType = response.headers.get("content-type") || "";
   const data = contentType.includes("application/json")
     ? await response.json()
@@ -34,7 +38,10 @@ async function request(path, options = {}) {
   });
 
   if (!response.ok) {
-    const message = typeof data === "string" ? data : data.error || data.detail || "Request failed";
+    const message =
+      typeof data === "string"
+        ? data
+        : data.error || data.detail || "Request failed";
     throw new Error(message);
   }
 
@@ -91,9 +98,10 @@ export const api = {
   },
   documents: {
     list: (companyId) => request(`/api/companies/${companyId}/documents`),
-    upload: (companyId, file) => {
+    upload: (companyId, file, docType = "pdf") => {
       const formData = new FormData();
       formData.append("file", file);
+      formData.append("docType", docType);
       return request(`/api/companies/${companyId}/documents`, {
         method: "POST",
         body: formData,
@@ -108,6 +116,25 @@ export const api = {
         method: "DELETE",
       }),
   },
+  liveApiTools: {
+    list: (companyId) => request(`/api/companies/${companyId}/live-api-tools`),
+    create: (companyId, payload) =>
+      request(`/api/companies/${companyId}/live-api-tools`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      }),
+    update: (companyId, toolId, payload) =>
+      request(`/api/companies/${companyId}/live-api-tools/${toolId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      }),
+    remove: (companyId, toolId) =>
+      request(`/api/companies/${companyId}/live-api-tools/${toolId}`, {
+        method: "DELETE",
+      }),
+  },
   chat: {
     ask: (companyId, payload) =>
       request(`/api/companies/${companyId}/chat`, {
@@ -115,7 +142,8 @@ export const api = {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       }),
-    conversations: (companyId) => request(`/api/companies/${companyId}/chat/conversations`),
+    conversations: (companyId) =>
+      request(`/api/companies/${companyId}/chat/conversations`),
     history: (companyId, sessionId) =>
       request(`/api/companies/${companyId}/chat/history/${sessionId}`),
   },
