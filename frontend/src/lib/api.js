@@ -89,6 +89,23 @@ export const api = {
       }),
     remove: (id) => request(`/api/companies/${id}`, { method: "DELETE" }),
   },
+  whatsappIntegration: {
+    get: (companyId) => request(`/api/companies/${companyId}/whatsapp-integration`),
+    save: (companyId, payload, hasExisting) =>
+      request(`/api/companies/${companyId}/whatsapp-integration`, {
+        method: hasExisting ? "PUT" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      }),
+    validate: (companyId) =>
+      request(`/api/companies/${companyId}/whatsapp-integration/validate`, {
+        method: "POST",
+      }),
+    remove: (companyId) =>
+      request(`/api/companies/${companyId}/whatsapp-integration`, {
+        method: "DELETE",
+      }),
+  },
   documents: {
     list: (companyId) => request(`/api/companies/${companyId}/documents`),
     upload: (companyId, file) => {
