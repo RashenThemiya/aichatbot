@@ -26,6 +26,12 @@ const emptyWhatsAppForm = {
   accessToken: "",
   isActive: true,
 };
+const emptySmsForm = {
+  accountSid: "",
+  authToken: "",
+  phoneNumber: "",
+  isActive: true,
+};
 const emptyLoginForm = { email: "admin@example.com", password: "admin123" };
 const emptyAdminForm = {
   name: "",
@@ -112,7 +118,7 @@ function SecondaryButton({ children, className = "", ...props }) {
 function Field({ label, children }) {
   return (
     <label className="block">
-      <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+      <span className="block mb-1 text-xs font-semibold tracking-wide uppercase text-slate-500">
         {label}
       </span>
       {children}
@@ -123,7 +129,7 @@ function Field({ label, children }) {
 function TextInput(props) {
   return (
     <input
-      className="h-10 w-full rounded border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
+      className="w-full h-10 px-3 text-sm transition bg-white border rounded outline-none border-slate-200 text-slate-900 placeholder:text-slate-400 focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
       {...props}
     />
   );
@@ -132,7 +138,7 @@ function TextInput(props) {
 function TextArea(props) {
   return (
     <textarea
-      className="min-h-24 w-full resize-y rounded border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
+      className="w-full px-3 py-2 text-sm transition bg-white border rounded outline-none resize-y min-h-24 border-slate-200 text-slate-900 placeholder:text-slate-400 focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
       {...props}
     />
   );
@@ -168,6 +174,9 @@ export default function App() {
   const [whatsappIntegration, setWhatsappIntegration] = useState(null);
   const [whatsappForm, setWhatsappForm] = useState(emptyWhatsAppForm);
   const [whatsappValidation, setWhatsappValidation] = useState(null);
+  const [smsIntegration, setSmsIntegration] = useState(null);
+  const [smsForm, setSmsForm] = useState(emptySmsForm);
+  const [smsValidation, setSmsValidation] = useState(null);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState({
@@ -178,6 +187,7 @@ export default function App() {
     chat: false,
     widgetTest: false,
     whatsapp: false,
+    sms: false,
     conversations: false,
     auth: false,
     admins: false,
@@ -198,6 +208,7 @@ export default function App() {
         { id: "dashboard", label: "Dashboard", icon: Activity },
         { id: "documents", label: "Document Management", icon: FileText },
         { id: "whatsapp", label: "WhatsApp Integration", icon: MessageSquare },
+        { id: "sms", label: "SMS Integration", icon: MessageSquare },
         { id: "history", label: "Chat History", icon: History },
         { id: "help", label: "Widget Help", icon: Search },
       ];
@@ -205,6 +216,7 @@ export default function App() {
     { id: "dashboard", label: "Company Dashboard", icon: Activity },
     { id: "documents", label: "Document Management", icon: FileText },
     { id: "whatsapp", label: "WhatsApp Integration", icon: MessageSquare },
+    { id: "sms", label: "SMS Integration", icon: MessageSquare },
     { id: "chat", label: "Chat Test", icon: MessageSquare },
     { id: "history", label: "Chat History", icon: History },
     { id: "help", label: "Widget Help", icon: Search },
@@ -310,6 +322,39 @@ export default function App() {
     }
   }
 
+
+  async function loadSmsIntegration(companyId = selectedId) {
+    if (!companyId) {
+      setSmsIntegration(null);
+      setSmsForm(emptySmsForm);
+      setSmsValidation(null);
+      return;
+    }
+
+    setLoading((current) => ({ ...current, sms: true }));
+    setSmsValidation(null);
+    try {
+      const result = await api.smsIntegration.get(companyId);
+      const integration = Array.isArray(result) ? null : result;
+      setSmsIntegration(integration);
+      setSmsForm({
+        accountSid: integration?.accountSid || "",
+        authToken: "",
+        phoneNumber: integration?.phoneNumber || "",
+        isActive: integration?.isActive !== false,
+      });
+    } catch (err) {
+      if (String(err.message || "").toLowerCase().includes("not found")) {
+        setSmsIntegration(null);
+        setSmsForm(emptySmsForm);
+      } else {
+        setError(err.message || "Failed to load SMS integration");
+      }
+    } finally {
+      setLoading((current) => ({ ...current, sms: false }));
+    }
+  }
+
   async function loadAdminUsers() {
     if (!isSuperAdmin) return;
     const result = await runTask("admins", () => api.adminUsers.list());
@@ -344,6 +389,7 @@ export default function App() {
       loadDocuments(selectedId);
       loadConversations(selectedId);
       loadWhatsAppIntegration(selectedId);
+      loadSmsIntegration(selectedId);
       setSelectedConversation(null);
       setChatResult(null);
       setWidgetKeyResult(null);
@@ -385,6 +431,9 @@ export default function App() {
     setWhatsappIntegration(null);
     setWhatsappForm(emptyWhatsAppForm);
     setWhatsappValidation(null);
+    setSmsIntegration(null);
+    setSmsForm(emptySmsForm);
+    setSmsValidation(null);
   }
 
   useEffect(() => {
@@ -487,6 +536,9 @@ export default function App() {
     setWhatsappIntegration(null);
     setWhatsappForm(emptyWhatsAppForm);
     setWhatsappValidation(null);
+    setSmsIntegration(null);
+    setSmsForm(emptySmsForm);
+    setSmsValidation(null);
   }
 
   async function handleGenerateWidgetApiKey() {
@@ -670,6 +722,86 @@ export default function App() {
     }
   }
 
+
+
+  async function handleSaveSmsIntegration(event) {
+    event.preventDefault();
+    if (!selectedCompany) return;
+
+    const accountSid = smsForm.accountSid.trim();
+    const authToken = smsForm.authToken.trim();
+    const phoneNumber = smsForm.phoneNumber.trim();
+
+    if (!accountSid) {
+      setError("Twilio Account SID is required");
+      return;
+    }
+
+    if (!phoneNumber) {
+      setError("Twilio SMS phone number is required");
+      return;
+    }
+
+    if (!smsIntegration && !authToken) {
+      setError("Twilio Auth Token is required when creating an SMS integration");
+      return;
+    }
+
+    const payload = {
+      accountSid,
+      phoneNumber,
+      isActive: smsForm.isActive,
+    };
+    if (authToken) payload.authToken = authToken;
+
+    const result = await runTask(
+      "sms",
+      () => api.smsIntegration.save(selectedCompany._id, payload, Boolean(smsIntegration)),
+      smsIntegration ? "SMS integration updated" : "SMS integration saved"
+    );
+
+    if (result) {
+      setSmsIntegration(result);
+      setSmsForm({
+        accountSid: result.accountSid || accountSid,
+        authToken: "",
+        phoneNumber: result.phoneNumber || phoneNumber,
+        isActive: result.isActive !== false,
+      });
+      setSmsValidation(null);
+    }
+  }
+
+  async function handleValidateSmsIntegration() {
+    if (!selectedCompany) return;
+
+    const result = await runTask(
+      "sms",
+      () => api.smsIntegration.validate(selectedCompany._id),
+      "SMS integration validated"
+    );
+
+    if (result) setSmsValidation(result);
+  }
+
+  async function handleDeleteSmsIntegration() {
+    if (!selectedCompany || !smsIntegration) return;
+    const ok = window.confirm("Delete this SMS integration?");
+    if (!ok) return;
+
+    const result = await runTask(
+      "sms",
+      () => api.smsIntegration.remove(selectedCompany._id),
+      "SMS integration deleted"
+    );
+
+    if (result) {
+      setSmsIntegration(null);
+      setSmsForm(emptySmsForm);
+      setSmsValidation(null);
+    }
+  }
+
   async function handleUpload(event) {
     const file = event.target.files?.[0];
     event.target.value = "";
@@ -768,16 +900,16 @@ export default function App() {
   if (!currentUser) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[#f5f7fb] px-4">
-        <section className="w-full max-w-md rounded border border-slate-200 bg-white p-6 shadow-sm">
+        <section className="w-full max-w-md p-6 bg-white border rounded shadow-sm border-slate-200">
           <div className="mb-6">
-            <div className="mb-3 flex h-11 w-11 items-center justify-center rounded bg-slate-900 text-white">
+            <div className="flex items-center justify-center mb-3 text-white rounded h-11 w-11 bg-slate-900">
               <MessageSquare size={21} />
             </div>
             <h1 className="text-2xl font-bold text-slate-950">Admin Login</h1>
             <p className="mt-1 text-sm text-slate-500">{api.baseUrl}</p>
           </div>
           {error && (
-            <div className="mb-4 rounded border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+            <div className="px-3 py-2 mb-4 text-sm border rounded border-rose-200 bg-rose-50 text-rose-700">
               {error}
             </div>
           )}
@@ -813,10 +945,10 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#f5f7fb]">
-      <header className="border-b border-slate-200 bg-white">
+      <header className="bg-white border-b border-slate-200">
         <div className="mx-auto flex max-w-[1500px] flex-col gap-4 px-4 py-4 lg:flex-row lg:items-center lg:justify-between lg:px-6">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded bg-slate-900 text-white">
+            <div className="flex items-center justify-center w-10 h-10 text-white rounded bg-slate-900">
               <MessageSquare size={20} />
             </div>
             <div>
@@ -825,7 +957,7 @@ export default function App() {
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <span className="rounded bg-slate-100 px-3 py-2 text-sm font-semibold text-slate-700">
+            <span className="px-3 py-2 text-sm font-semibold rounded bg-slate-100 text-slate-700">
               {currentUser.name} · {currentUser.role}
             </span>
             {health && (
@@ -844,9 +976,9 @@ export default function App() {
       </header>
 
       {showCompanyModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 px-4">
-          <section className="w-full max-w-lg rounded border border-slate-200 bg-white shadow-xl">
-            <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4 bg-slate-950/40">
+          <section className="w-full max-w-lg bg-white border rounded shadow-xl border-slate-200">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200">
               <div className="flex items-center gap-2">
                 <Plus size={18} />
                 <h2 className="font-semibold text-slate-950">Add Company</h2>
@@ -855,7 +987,7 @@ export default function App() {
                 <XCircle size={16} />
               </IconButton>
             </div>
-            <form className="space-y-3 p-4" onSubmit={handleCreateCompany}>
+            <form className="p-4 space-y-3" onSubmit={handleCreateCompany}>
               <Field label="Name">
                 <TextInput
                   value={companyForm.name}
@@ -900,9 +1032,9 @@ export default function App() {
       )}
 
       {showWidgetPreview && selectedCompany && widgetApiKeyInput.trim() && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 px-4 py-6">
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4 py-6 bg-slate-950/55">
           <section className="flex h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded border border-slate-200 bg-white shadow-xl">
-            <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200">
               <div className="flex items-center gap-2">
                 <MessageSquare size={18} />
                 <div>
@@ -914,18 +1046,18 @@ export default function App() {
                 <XCircle size={16} />
               </IconButton>
             </div>
-            <div className="relative min-h-0 flex-1 bg-slate-100 p-6">
+            <div className="relative flex-1 min-h-0 p-6 bg-slate-100">
               <div className="min-h-[460px] rounded border border-slate-200 bg-white p-6 shadow-sm">
                 <h1 className="text-2xl font-bold text-slate-950">{selectedCompany.name}</h1>
                 <p className="mt-2 text-sm text-slate-500">
                   Example customer website page. Click the floating chat button in the bottom-right corner.
                 </p>
-                <div className="mt-8 grid gap-3 md:grid-cols-2">
-                  <div className="rounded border border-slate-200 bg-slate-50 p-4">
+                <div className="grid gap-3 mt-8 md:grid-cols-2">
+                  <div className="p-4 border rounded border-slate-200 bg-slate-50">
                     <div className="text-sm font-semibold text-slate-900">Knowledge support</div>
                     <p className="mt-1 text-sm text-slate-500">Ask questions from uploaded documents.</p>
                   </div>
-                  <div className="rounded border border-slate-200 bg-slate-50 p-4">
+                  <div className="p-4 border rounded border-slate-200 bg-slate-50">
                     <div className="text-sm font-semibold text-slate-900">Website embed</div>
                     <p className="mt-1 text-sm text-slate-500">This preview uses the public widget API key.</p>
                   </div>
@@ -933,7 +1065,7 @@ export default function App() {
               </div>
               {widgetPreviewOpen && (
               <div className="absolute bottom-24 right-6 flex h-[560px] w-[380px] max-w-[calc(100%-48px)] flex-col overflow-hidden rounded border border-slate-200 bg-white shadow-2xl">
-                <div className="bg-slate-900 px-4 py-3 text-white">
+                <div className="px-4 py-3 text-white bg-slate-900">
                   <div className="flex items-center justify-between gap-3">
                     <div>
                       <div className="text-sm font-bold">{selectedCompany.name} Support</div>
@@ -941,14 +1073,14 @@ export default function App() {
                     </div>
                     <button
                       type="button"
-                      className="rounded border border-white/20 px-2 py-1 text-xs text-white"
+                      className="px-2 py-1 text-xs text-white border rounded border-white/20"
                       onClick={() => setWidgetPreviewOpen(false)}
                     >
                       Close
                     </button>
                   </div>
                 </div>
-                <div className="min-h-0 flex-1 space-y-3 overflow-y-auto bg-slate-50 p-4">
+                <div className="flex-1 min-h-0 p-4 space-y-3 overflow-y-auto bg-slate-50">
                   {widgetTestMessages.map((message, index) => (
                     <div
                       key={`${message.role}-${index}`}
@@ -961,23 +1093,23 @@ export default function App() {
                     >
                       <p className="whitespace-pre-wrap">{message.content}</p>
                       {message.sources?.length > 0 && (
-                        <div className="mt-2 border-t border-slate-200 pt-2 text-xs text-slate-500">
+                        <div className="pt-2 mt-2 text-xs border-t border-slate-200 text-slate-500">
                           Sources: {message.sources.map((source) => source.documentName).filter(Boolean).join(", ")}
                         </div>
                       )}
                     </div>
                   ))}
                 </div>
-                <form className="flex gap-2 border-t border-slate-200 bg-white p-3" onSubmit={handleWidgetTestChat}>
+                <form className="flex gap-2 p-3 bg-white border-t border-slate-200" onSubmit={handleWidgetTestChat}>
                   <input
-                    className="min-w-0 flex-1 rounded border border-slate-200 px-3 text-sm outline-none focus:border-slate-500"
+                    className="flex-1 min-w-0 px-3 text-sm border rounded outline-none border-slate-200 focus:border-slate-500"
                     value={widgetTestMessage}
                     onChange={(event) => setWidgetTestMessage(event.target.value)}
                     placeholder="Type test message"
                   />
                   <button
                     type="submit"
-                    className="rounded bg-slate-900 px-4 text-sm font-semibold text-white"
+                    className="px-4 text-sm font-semibold text-white rounded bg-slate-900"
                     disabled={loading.widgetTest}
                   >
                     {loading.widgetTest ? "..." : "Send"}
@@ -988,7 +1120,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => setWidgetPreviewOpen((value) => !value)}
-                className="absolute bottom-6 right-6 flex h-16 w-16 items-center justify-center rounded-full bg-slate-900 text-white shadow-2xl transition hover:bg-slate-800"
+                className="absolute flex items-center justify-center w-16 h-16 text-white transition rounded-full shadow-2xl bottom-6 right-6 bg-slate-900 hover:bg-slate-800"
                 title="Open chat"
                 aria-label="Open chat"
               >
@@ -1001,8 +1133,8 @@ export default function App() {
 
       <main className="mx-auto grid max-w-[1500px] grid-cols-1 gap-4 px-4 py-4 lg:grid-cols-[320px_minmax(0,1fr)] lg:px-6">
         <aside className="space-y-4">
-          <section className="rounded border border-slate-200 bg-white p-2">
-            <div className="px-2 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+          <section className="p-2 bg-white border rounded border-slate-200">
+            <div className="px-2 py-2 text-xs font-semibold tracking-wide uppercase text-slate-500">
               Navigation
             </div>
             <nav className="space-y-1">
@@ -1010,7 +1142,7 @@ export default function App() {
                 <button
                   type="button"
                   onClick={backToSuperAdmin}
-                  className="mb-2 flex w-full items-center gap-3 rounded border border-slate-200 bg-white px-3 py-3 text-left text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                  className="flex items-center w-full gap-3 px-3 py-3 mb-2 text-sm font-semibold text-left transition bg-white border rounded border-slate-200 text-slate-700 hover:bg-slate-50"
                 >
                   <Building2 size={17} />
                   Superadmin Home
@@ -1039,8 +1171,8 @@ export default function App() {
           </section>
 
           {false && isSuperAdmin && !selectedCompany && activeSection === "companies" && (
-          <section className="rounded border border-slate-200 bg-white">
-            <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+          <section className="bg-white border rounded border-slate-200">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200">
               <div className="flex items-center gap-2">
                 <Building2 size={18} />
                 <h2 className="font-semibold text-slate-950">Companies</h2>
@@ -1089,8 +1221,8 @@ export default function App() {
           )}
 
           {isSuperAdmin && !selectedCompany && activeSection === "companies" && (
-          <section className="rounded border border-slate-200 bg-white p-4">
-            <div className="mb-3 flex items-center gap-2">
+          <section className="p-4 bg-white border rounded border-slate-200">
+            <div className="flex items-center gap-2 mb-3">
               <Plus size={18} />
               <h2 className="font-semibold text-slate-950">New Company</h2>
             </div>
@@ -1153,23 +1285,23 @@ export default function App() {
             <>
               {activeSection === "dashboard" && (
                 <section className="grid gap-4 md:grid-cols-3">
-                  <div className="rounded border border-slate-200 bg-white p-4">
+                  <div className="p-4 bg-white border rounded border-slate-200">
                     <div className="text-sm font-semibold text-slate-500">Companies</div>
                     <div className="mt-2 text-3xl font-bold text-slate-950">{companies.length}</div>
                   </div>
-                  <div className="rounded border border-slate-200 bg-white p-4">
+                  <div className="p-4 bg-white border rounded border-slate-200">
                     <div className="text-sm font-semibold text-slate-500">Admins</div>
                     <div className="mt-2 text-3xl font-bold text-slate-950">{adminUsers.length}</div>
                   </div>
-                  <div className="rounded border border-slate-200 bg-white p-4">
+                  <div className="p-4 bg-white border rounded border-slate-200">
                     <div className="text-sm font-semibold text-slate-500">Backend</div>
                     <div className="mt-2"><StatusBadge status={health?.mongodb || "unknown"} /></div>
                   </div>
                 </section>
               )}
               {activeSection === "dashboard" && (
-                <section className="rounded border border-slate-200 bg-white">
-                  <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+                <section className="bg-white border rounded border-slate-200">
+                  <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200">
                     <div className="flex items-center gap-2">
                       <Building2 size={18} />
                       <h2 className="font-semibold text-slate-950">Companies</h2>
@@ -1185,7 +1317,7 @@ export default function App() {
                         type="button"
                         key={company._id}
                         onClick={() => openCompanyDashboard(company._id)}
-                        className="rounded border border-slate-200 bg-white p-4 text-left transition hover:border-slate-400 hover:shadow-sm"
+                        className="p-4 text-left transition bg-white border rounded border-slate-200 hover:border-slate-400 hover:shadow-sm"
                       >
                         <div className="flex items-start justify-between gap-3">
                           <div>
@@ -1194,7 +1326,7 @@ export default function App() {
                           </div>
                           <StatusBadge status={company.isActive ? "active" : "inactive"} />
                         </div>
-                        <p className="mt-3 line-clamp-2 text-sm text-slate-600">
+                        <p className="mt-3 text-sm line-clamp-2 text-slate-600">
                           {company.description || "No description"}
                         </p>
                       </button>
@@ -1203,8 +1335,8 @@ export default function App() {
                 </section>
               )}
               {activeSection === "companies" && (
-                <section className="rounded border border-slate-200 bg-white">
-                  <div className="flex flex-col gap-3 border-b border-slate-200 px-4 py-3 md:flex-row md:items-center md:justify-between">
+                <section className="bg-white border rounded border-slate-200">
+                  <div className="flex flex-col gap-3 px-4 py-3 border-b border-slate-200 md:flex-row md:items-center md:justify-between">
                     <div className="flex items-center gap-2">
                       <Building2 size={18} />
                       <h2 className="font-semibold text-slate-950">Company Management</h2>
@@ -1220,8 +1352,8 @@ export default function App() {
                     </div>
                   </div>
                   <div className="overflow-x-auto">
-                    <table className="min-w-full divide-y divide-slate-200 text-sm">
-                      <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    <table className="min-w-full text-sm divide-y divide-slate-200">
+                      <thead className="text-xs font-semibold tracking-wide text-left uppercase bg-slate-50 text-slate-500">
                         <tr>
                           <th className="px-4 py-3">Company</th>
                           <th className="px-4 py-3">Slug</th>
@@ -1235,7 +1367,7 @@ export default function App() {
                           <tr key={company._id}>
                             <td className="px-4 py-3">
                               <div className="font-semibold text-slate-900">{company.name}</div>
-                              <div className="max-w-md truncate text-xs text-slate-500">
+                              <div className="max-w-md text-xs truncate text-slate-500">
                                 {company.description || "No description"}
                               </div>
                             </td>
@@ -1260,7 +1392,7 @@ export default function App() {
               )}
             </>
           ) : !selectedCompany && !(isSuperAdmin && activeSection === "admins") ? (
-            <div className="rounded border border-slate-200 bg-white p-10 text-center">
+            <div className="p-10 text-center bg-white border rounded border-slate-200">
               <Building2 className="mx-auto mb-3 text-slate-400" size={34} />
               <h2 className="text-lg font-semibold text-slate-950">Select or create a company</h2>
             </div>
@@ -1268,17 +1400,17 @@ export default function App() {
             <>
               {activeSection === "dashboard" && (
                 <section className="grid gap-4 md:grid-cols-3">
-                  <div className="rounded border border-slate-200 bg-white p-4">
+                  <div className="p-4 bg-white border rounded border-slate-200">
                     <div className="text-sm font-semibold text-slate-500">Companies</div>
                     <div className="mt-2 text-3xl font-bold text-slate-950">
                       {isSuperAdmin ? companies.length : 1}
                     </div>
                   </div>
-                  <div className="rounded border border-slate-200 bg-white p-4">
+                  <div className="p-4 bg-white border rounded border-slate-200">
                     <div className="text-sm font-semibold text-slate-500">Documents</div>
                     <div className="mt-2 text-3xl font-bold text-slate-950">{documents.length}</div>
                   </div>
-                  <div className="rounded border border-slate-200 bg-white p-4">
+                  <div className="p-4 bg-white border rounded border-slate-200">
                     <div className="text-sm font-semibold text-slate-500">Conversations</div>
                     <div className="mt-2 text-3xl font-bold text-slate-950">{conversations.length}</div>
                   </div>
@@ -1286,7 +1418,7 @@ export default function App() {
               )}
 
               {(activeSection === "dashboard" || activeSection === "companies") && (
-              <section className="rounded border border-slate-200 bg-white p-4">
+              <section className="p-4 bg-white border rounded border-slate-200">
                 <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                   <div>
                     <div className="flex flex-wrap items-center gap-2">
@@ -1295,7 +1427,7 @@ export default function App() {
                     </div>
                     <p className="mt-1 text-sm text-slate-500">{selectedCompany.description || "No description"}</p>
                     <p className="mt-2 text-xs text-slate-400">ID: {selectedCompany._id}</p>
-                    <div className="mt-4 rounded border border-slate-200 bg-slate-50 p-3">
+                    <div className="p-3 mt-4 border rounded border-slate-200 bg-slate-50">
                       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                         <div>
                           <div className="text-sm font-semibold text-slate-900">Widget API Key</div>
@@ -1326,11 +1458,11 @@ export default function App() {
                         </div>
                       </div>
                       {widgetKeyResult?.apiKey && (
-                        <div className="mt-3 rounded border border-amber-200 bg-amber-50 p-3">
-                          <div className="text-xs font-semibold uppercase tracking-wide text-amber-700">
+                        <div className="p-3 mt-3 border rounded border-amber-200 bg-amber-50">
+                          <div className="text-xs font-semibold tracking-wide uppercase text-amber-700">
                             Copy this key now
                           </div>
-                          <code className="mt-2 block break-all text-xs text-amber-900">
+                          <code className="block mt-2 text-xs break-all text-amber-900">
                             {widgetKeyResult.apiKey}
                           </code>
                         </div>
@@ -1371,7 +1503,7 @@ export default function App() {
                 </div>
 
                 {editingCompany && (
-                  <form className="mt-4 grid gap-3 border-t border-slate-200 pt-4 lg:grid-cols-2" onSubmit={handleUpdateCompany}>
+                  <form className="grid gap-3 pt-4 mt-4 border-t border-slate-200 lg:grid-cols-2" onSubmit={handleUpdateCompany}>
                     <Field label="Name">
                       <TextInput
                         value={companyForm.name}
@@ -1409,8 +1541,8 @@ export default function App() {
               )}
 
               {activeSection === "whatsapp" && (
-                <section className="rounded border border-slate-200 bg-white">
-                  <div className="flex flex-col gap-3 border-b border-slate-200 px-4 py-3 md:flex-row md:items-center md:justify-between">
+                <section className="bg-white border rounded border-slate-200">
+                  <div className="flex flex-col gap-3 px-4 py-3 border-b border-slate-200 md:flex-row md:items-center md:justify-between">
                     <div className="flex items-center gap-2">
                       <MessageSquare size={18} />
                       <h2 className="font-semibold text-slate-950">WhatsApp Integration</h2>
@@ -1458,10 +1590,10 @@ export default function App() {
                           />
                         </Field>
                         <Field label="Status">
-                          <label className="flex h-10 items-center gap-3 rounded border border-slate-200 bg-white px-3 text-sm text-slate-700">
+                          <label className="flex items-center h-10 gap-3 px-3 text-sm bg-white border rounded border-slate-200 text-slate-700">
                             <input
                               type="checkbox"
-                              className="h-4 w-4 rounded border-slate-300"
+                              className="w-4 h-4 rounded border-slate-300"
                               checked={whatsappForm.isActive}
                               onChange={(event) =>
                                 setWhatsappForm((current) => ({
@@ -1512,11 +1644,11 @@ export default function App() {
                     </form>
 
                     <aside className="space-y-3">
-                      <div className="rounded border border-slate-200 bg-slate-50 p-4">
+                      <div className="p-4 border rounded border-slate-200 bg-slate-50">
                         <div className="text-sm font-semibold text-slate-900">Saved credential</div>
                         <dl className="mt-3 space-y-3 text-sm">
                           <div>
-                            <dt className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                            <dt className="text-xs font-semibold tracking-wide uppercase text-slate-500">
                               Phone number ID
                             </dt>
                             <dd className="mt-1 break-all text-slate-800">
@@ -1524,7 +1656,7 @@ export default function App() {
                             </dd>
                           </div>
                           <div>
-                            <dt className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                            <dt className="text-xs font-semibold tracking-wide uppercase text-slate-500">
                               Token preview
                             </dt>
                             <dd className="mt-1 text-slate-800">
@@ -1534,7 +1666,7 @@ export default function App() {
                             </dd>
                           </div>
                           <div>
-                            <dt className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                            <dt className="text-xs font-semibold tracking-wide uppercase text-slate-500">
                               Updated
                             </dt>
                             <dd className="mt-1 text-slate-800">
@@ -1545,7 +1677,7 @@ export default function App() {
                       </div>
 
                       {whatsappValidation && (
-                        <div className="rounded border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">
+                        <div className="p-4 text-sm border rounded border-emerald-200 bg-emerald-50 text-emerald-800">
                           <div className="font-semibold">Validation passed</div>
                           <div className="mt-2 text-xs leading-5">
                             {whatsappValidation.metaPhoneNumber?.display_phone_number ||
@@ -1564,9 +1696,201 @@ export default function App() {
                 </section>
               )}
 
+
+
+              {activeSection === "sms" && (
+                <section className="bg-white border rounded border-slate-200">
+                  <div className="flex flex-col gap-3 px-4 py-3 border-b border-slate-200 md:flex-row md:items-center md:justify-between">
+                    <div className="flex items-center gap-2">
+                      <MessageSquare size={18} />
+                      <h2 className="font-semibold text-slate-950">SMS Integration</h2>
+                      {smsIntegration && (
+                        <StatusBadge status={smsIntegration.isActive ? "active" : "inactive"} />
+                      )}
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <IconButton title="Refresh SMS integration" onClick={() => loadSmsIntegration()}>
+                        <RefreshCcw size={16} />
+                      </IconButton>
+                      <SecondaryButton
+                        onClick={handleValidateSmsIntegration}
+                        disabled={!smsIntegration || loading.sms}
+                      >
+                        {loading.sms ? <Loader2 className="animate-spin" size={16} /> : <CheckCircle2 size={16} />}
+                        Validate
+                      </SecondaryButton>
+                      {smsIntegration && (
+                        <SecondaryButton
+                          className="text-rose-700 hover:bg-rose-50"
+                          onClick={handleDeleteSmsIntegration}
+                          disabled={loading.sms}
+                        >
+                          <Trash2 size={16} />
+                          Delete
+                        </SecondaryButton>
+                      )}
+                    </div>
+                  </div>
+                  <div className="grid gap-4 p-4 xl:grid-cols-[minmax(0,1fr)_380px]">
+                    <form className="space-y-4" onSubmit={handleSaveSmsIntegration}>
+                      <div className="grid gap-4 md:grid-cols-2">
+                        <Field label="Twilio Account SID">
+                          <TextInput
+                            value={smsForm.accountSid}
+                            onChange={(event) =>
+                              setSmsForm((current) => ({
+                                ...current,
+                                accountSid: event.target.value,
+                              }))
+                            }
+                            placeholder="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                            required
+                          />
+                        </Field>
+                        <Field label="Twilio phone number">
+                          <TextInput
+                            value={smsForm.phoneNumber}
+                            onChange={(event) =>
+                              setSmsForm((current) => ({
+                                ...current,
+                                phoneNumber: event.target.value,
+                              }))
+                            }
+                            placeholder="+14161234567"
+                            required
+                          />
+                        </Field>
+                      </div>
+                      <Field label="Status">
+                        <label className="flex items-center h-10 gap-3 px-3 text-sm bg-white border rounded border-slate-200 text-slate-700">
+                          <input
+                            type="checkbox"
+                            className="w-4 h-4 rounded border-slate-300"
+                            checked={smsForm.isActive}
+                            onChange={(event) =>
+                              setSmsForm((current) => ({
+                                ...current,
+                                isActive: event.target.checked,
+                              }))
+                            }
+                          />
+                          Active for this company
+                        </label>
+                      </Field>
+                      <Field label={smsIntegration ? "New Auth Token optional" : "Twilio Auth Token"}>
+                        <TextArea
+                          value={smsForm.authToken}
+                          onChange={(event) =>
+                            setSmsForm((current) => ({
+                              ...current,
+                              authToken: event.target.value,
+                            }))
+                          }
+                          placeholder={
+                            smsIntegration
+                              ? "Paste a new Twilio Auth Token only when rotating"
+                              : "Paste Twilio Auth Token"
+                          }
+                          required={!smsIntegration}
+                        />
+                      </Field>
+                      <div className="flex flex-wrap gap-2">
+                        <PrimaryButton type="submit" disabled={loading.sms}>
+                          {loading.sms ? <Loader2 className="animate-spin" size={16} /> : <CheckCircle2 size={16} />}
+                          {smsIntegration ? "Update Integration" : "Save Integration"}
+                        </PrimaryButton>
+                        <SecondaryButton
+                          onClick={() => {
+                            setSmsForm({
+                              accountSid: smsIntegration?.accountSid || "",
+                              authToken: "",
+                              phoneNumber: smsIntegration?.phoneNumber || "",
+                              isActive: smsIntegration?.isActive !== false,
+                            });
+                            setSmsValidation(null);
+                          }}
+                        >
+                          Reset
+                        </SecondaryButton>
+                      </div>
+                    </form>
+
+                    <aside className="space-y-3">
+                      <div className="p-4 border rounded border-slate-200 bg-slate-50">
+                        <div className="text-sm font-semibold text-slate-900">Saved credential</div>
+                        <dl className="mt-3 space-y-3 text-sm">
+                          <div>
+                            <dt className="text-xs font-semibold tracking-wide uppercase text-slate-500">
+                              Account SID
+                            </dt>
+                            <dd className="mt-1 break-all text-slate-800">
+                              {smsIntegration?.accountSid || "Not configured"}
+                            </dd>
+                          </div>
+                          <div>
+                            <dt className="text-xs font-semibold tracking-wide uppercase text-slate-500">
+                              Phone number
+                            </dt>
+                            <dd className="mt-1 break-all text-slate-800">
+                              {smsIntegration?.phoneNumber || "Not configured"}
+                            </dd>
+                          </div>
+                          <div>
+                            <dt className="text-xs font-semibold tracking-wide uppercase text-slate-500">
+                              Auth token preview
+                            </dt>
+                            <dd className="mt-1 text-slate-800">
+                              {smsIntegration?.authTokenLast4
+                                ? `Ends with ${smsIntegration.authTokenLast4}`
+                                : "Not saved"}
+                            </dd>
+                          </div>
+                          <div>
+                            <dt className="text-xs font-semibold tracking-wide uppercase text-slate-500">
+                              Incoming SMS webhook
+                            </dt>
+                            <dd className="mt-1 break-all text-slate-800">
+                              {`${api.baseUrl}/api/sms/webhook`}
+                            </dd>
+                          </div>
+                          <div>
+                            <dt className="text-xs font-semibold tracking-wide uppercase text-slate-500">
+                              Status callback URL
+                            </dt>
+                            <dd className="mt-1 break-all text-slate-800">
+                              {`${api.baseUrl}/api/sms/status`}
+                            </dd>
+                          </div>
+                          <div>
+                            <dt className="text-xs font-semibold tracking-wide uppercase text-slate-500">
+                              Updated
+                            </dt>
+                            <dd className="mt-1 text-slate-800">
+                              {formatDate(smsIntegration?.updatedAt)}
+                            </dd>
+                          </div>
+                        </dl>
+                      </div>
+
+                      {smsValidation && (
+                        <div className="p-4 text-sm border rounded border-emerald-200 bg-emerald-50 text-emerald-800">
+                          <div className="font-semibold">Validation passed</div>
+                          <div className="mt-2 text-xs leading-5">
+                            {smsValidation.phoneNumber || smsValidation.twilioPhoneNumberSid || smsValidation.accountSid}
+                          </div>
+                          {smsValidation.friendlyName && (
+                            <div className="mt-1 text-xs">Name: {smsValidation.friendlyName}</div>
+                          )}
+                        </div>
+                      )}
+                    </aside>
+                  </div>
+                </section>
+              )}
+
               {isSuperAdmin && activeSection === "admins" && (
-                <section className="rounded border border-slate-200 bg-white">
-                  <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+                <section className="bg-white border rounded border-slate-200">
+                  <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200">
                     <div className="flex items-center gap-2">
                       <Building2 size={18} />
                       <h2 className="font-semibold text-slate-950">Admin Users</h2>
@@ -1602,7 +1926,7 @@ export default function App() {
                       </Field>
                       <Field label="Role">
                         <select
-                          className="h-10 w-full rounded border border-slate-200 bg-white px-3 text-sm"
+                          className="w-full h-10 px-3 text-sm bg-white border rounded border-slate-200"
                           value={adminForm.role}
                           onChange={(event) =>
                             setAdminForm((current) => ({ ...current, role: event.target.value }))
@@ -1615,7 +1939,7 @@ export default function App() {
                       {adminForm.role === "company_admin" && (
                         <Field label="Company">
                           <select
-                            className="h-10 w-full rounded border border-slate-200 bg-white px-3 text-sm"
+                            className="w-full h-10 px-3 text-sm bg-white border rounded border-slate-200"
                             value={adminForm.companyId}
                             onChange={(event) =>
                               setAdminForm((current) => ({ ...current, companyId: event.target.value }))
@@ -1637,8 +1961,8 @@ export default function App() {
                       </PrimaryButton>
                     </form>
                     <div className="overflow-x-auto">
-                      <table className="min-w-full divide-y divide-slate-200 text-sm">
-                        <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      <table className="min-w-full text-sm divide-y divide-slate-200">
+                        <thead className="text-xs font-semibold tracking-wide text-left uppercase bg-slate-50 text-slate-500">
                           <tr>
                             <th className="px-4 py-3">Admin</th>
                             <th className="px-4 py-3">Role</th>
@@ -1651,7 +1975,7 @@ export default function App() {
                           {adminGroups.map(([groupName, admins]) => (
                             <Fragment key={groupName}>
                               <tr key={`${groupName}-group`} className="bg-slate-50">
-                                <td className="px-4 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500" colSpan={5}>
+                                <td className="px-4 py-2 text-xs font-semibold tracking-wide uppercase text-slate-500" colSpan={5}>
                                   {groupName}
                                 </td>
                               </tr>
@@ -1701,8 +2025,8 @@ export default function App() {
                 activeSection === "chat" ? "xl:grid-cols-[420px_minmax(0,1fr)]" : "xl:grid-cols-1"
               )}>
                 {activeSection === "documents" && (
-                <section className="rounded border border-slate-200 bg-white">
-                  <div className="flex flex-col gap-3 border-b border-slate-200 px-4 py-3 md:flex-row md:items-center md:justify-between">
+                <section className="bg-white border rounded border-slate-200">
+                  <div className="flex flex-col gap-3 px-4 py-3 border-b border-slate-200 md:flex-row md:items-center md:justify-between">
                     <div className="flex items-center gap-2">
                       <FileText size={18} />
                       <h2 className="font-semibold text-slate-950">Documents</h2>
@@ -1711,7 +2035,7 @@ export default function App() {
                       <IconButton title="Refresh documents" onClick={() => loadDocuments()}>
                         <RefreshCcw size={16} />
                       </IconButton>
-                      <label className="inline-flex h-9 cursor-pointer items-center justify-center gap-2 rounded bg-slate-900 px-3 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800">
+                      <label className="inline-flex items-center justify-center gap-2 px-3 text-sm font-semibold text-white transition rounded shadow-sm cursor-pointer h-9 bg-slate-900 hover:bg-slate-800">
                         <Upload size={16} />
                         Upload PDF
                         <input
@@ -1725,8 +2049,8 @@ export default function App() {
                     </div>
                   </div>
                   <div className="overflow-x-auto">
-                    <table className="min-w-full divide-y divide-slate-200 text-sm">
-                      <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    <table className="min-w-full text-sm divide-y divide-slate-200">
+                      <thead className="text-xs font-semibold tracking-wide text-left uppercase bg-slate-50 text-slate-500">
                         <tr>
                           <th className="px-4 py-3">File</th>
                           <th className="px-4 py-3">Status</th>
@@ -1746,9 +2070,9 @@ export default function App() {
                           documents.map((document) => (
                             <tr key={document._id}>
                               <td className="max-w-[320px] px-4 py-3">
-                                <div className="truncate font-medium text-slate-900">{document.originalName}</div>
+                                <div className="font-medium truncate text-slate-900">{document.originalName}</div>
                                 {document.indexError && (
-                                  <div className="mt-1 truncate text-xs text-rose-600">{document.indexError}</div>
+                                  <div className="mt-1 text-xs truncate text-rose-600">{document.indexError}</div>
                                 )}
                               </td>
                               <td className="px-4 py-3">
@@ -1780,14 +2104,14 @@ export default function App() {
                 )}
 
                 {isSuperAdmin && activeSection === "chat" && (
-                <section className="rounded border border-slate-200 bg-white">
-                  <div className="border-b border-slate-200 px-4 py-3">
+                <section className="bg-white border rounded border-slate-200">
+                  <div className="px-4 py-3 border-b border-slate-200">
                     <div className="flex items-center gap-2">
                       <MessageSquare size={18} />
                       <h2 className="font-semibold text-slate-950">Chat Test</h2>
                     </div>
                   </div>
-                  <form className="space-y-3 p-4" onSubmit={handleChat}>
+                  <form className="p-4 space-y-3" onSubmit={handleChat}>
                     <Field label="Session ID optional">
                       <TextInput
                         value={chatSessionId}
@@ -1809,20 +2133,20 @@ export default function App() {
                     </PrimaryButton>
                   </form>
                   {chatResult && (
-                    <div className="border-t border-slate-200 p-4">
-                      <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    <div className="p-4 border-t border-slate-200">
+                      <div className="mb-2 text-xs font-semibold tracking-wide uppercase text-slate-500">
                         Answer
                       </div>
-                      <p className="whitespace-pre-wrap text-sm leading-6 text-slate-800">{chatResult.answer}</p>
+                      <p className="text-sm leading-6 whitespace-pre-wrap text-slate-800">{chatResult.answer}</p>
                       <div className="mt-4 text-xs text-slate-500">Session: {chatResult.sessionId}</div>
                       <div className="mt-4 space-y-2">
                         {(chatResult.sources || []).map((source, index) => (
-                          <div key={`${source.documentId}-${index}`} className="rounded border border-slate-200 bg-slate-50 p-3">
+                          <div key={`${source.documentId}-${index}`} className="p-3 border rounded border-slate-200 bg-slate-50">
                             <div className="flex items-center justify-between gap-2">
-                              <span className="truncate text-xs font-semibold text-slate-700">{source.documentName}</span>
+                              <span className="text-xs font-semibold truncate text-slate-700">{source.documentName}</span>
                               <span className="text-xs text-slate-500">{source.score}</span>
                             </div>
-                            <p className="mt-2 line-clamp-3 text-xs leading-5 text-slate-600">{source.content}</p>
+                            <p className="mt-2 text-xs leading-5 line-clamp-3 text-slate-600">{source.content}</p>
                           </div>
                         ))}
                       </div>
@@ -1834,8 +2158,8 @@ export default function App() {
               )}
 
               {activeSection === "history" && (
-              <section className="rounded border border-slate-200 bg-white">
-                <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+              <section className="bg-white border rounded border-slate-200">
+                <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200">
                   <div className="flex items-center gap-2">
                     <History size={18} />
                     <h2 className="font-semibold text-slate-950">Conversations</h2>
@@ -1861,7 +2185,7 @@ export default function App() {
                         >
                           <Search className="shrink-0 text-slate-400" size={16} />
                           <span className="min-w-0">
-                            <span className="block truncate font-semibold text-slate-800">
+                            <span className="block font-semibold truncate text-slate-800">
                               {conversation.customerPhone || conversation.sessionId}
                             </span>
                             <span className="block text-xs text-slate-500">{formatDate(conversation.updatedAt)}</span>
@@ -1886,11 +2210,11 @@ export default function App() {
                             )}
                           >
                             <div className="mb-1 text-xs font-semibold uppercase opacity-70">{message.role}</div>
-                            <p className="whitespace-pre-wrap text-sm leading-6">{message.content}</p>
+                            <p className="text-sm leading-6 whitespace-pre-wrap">{message.content}</p>
                             {message.sources?.length > 0 && (
                               <div className="mt-3 space-y-2">
                                 {message.sources.map((source, sourceIndex) => (
-                                  <div key={sourceIndex} className="rounded bg-slate-50 p-2 text-slate-700">
+                                  <div key={sourceIndex} className="p-2 rounded bg-slate-50 text-slate-700">
                                     <div className="text-xs font-semibold">{source.documentName}</div>
                                     <div className="mt-1 text-xs leading-5">{source.content}</div>
                                   </div>
@@ -1907,8 +2231,8 @@ export default function App() {
               )}
 
               {activeSection === "help" && (
-                <section className="rounded border border-slate-200 bg-white">
-                  <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+                <section className="bg-white border rounded border-slate-200">
+                  <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200">
                     <div className="flex items-center gap-2">
                       <Search size={18} />
                       <h2 className="font-semibold text-slate-950">Connect Website Widget</h2>
@@ -1919,21 +2243,21 @@ export default function App() {
                   </div>
                   <div className="grid gap-4 p-4 xl:grid-cols-[minmax(0,1fr)_460px]">
                     <div className="space-y-4">
-                      <div className="rounded border border-slate-200 bg-slate-50 p-4">
+                      <div className="p-4 border rounded border-slate-200 bg-slate-50">
                         <div className="flex items-center gap-2 text-sm font-semibold text-slate-950">
-                          <span className="flex h-6 w-6 items-center justify-center rounded bg-slate-900 text-xs text-white">1</span>
+                          <span className="flex items-center justify-center w-6 h-6 text-xs text-white rounded bg-slate-900">1</span>
                           Generate widget API key
                         </div>
                         <p className="mt-1 text-sm text-slate-600">
                           Go to Company Dashboard and click Generate / Rotate. Copy the key when it appears.
                         </p>
                       </div>
-                      <div className="rounded border border-slate-200 bg-slate-50 p-4">
+                      <div className="p-4 border rounded border-slate-200 bg-slate-50">
                         <div className="flex items-center gap-2 text-sm font-semibold text-slate-950">
-                          <span className="flex h-6 w-6 items-center justify-center rounded bg-slate-900 text-xs text-white">2</span>
+                          <span className="flex items-center justify-center w-6 h-6 text-xs text-white rounded bg-slate-900">2</span>
                           Build and host widget file
                         </div>
-                        <pre className="mt-2 overflow-x-auto rounded bg-slate-900 p-3 text-xs text-white">
+                        <pre className="p-3 mt-2 overflow-x-auto text-xs text-white rounded bg-slate-900">
 {`cd C:\\Users\\Rashen\\Desktop\\github\\RAG-System\\frontend
 npm.cmd run build:widget`}
                         </pre>
@@ -1941,18 +2265,18 @@ npm.cmd run build:widget`}
                           Upload `dist-widget/rag-chat-widget.iife.js` to your server, CDN, or static hosting.
                         </p>
                       </div>
-                      <div className="rounded border border-slate-200 bg-slate-50 p-4">
+                      <div className="p-4 border rounded border-slate-200 bg-slate-50">
                         <div className="flex items-center gap-2 text-sm font-semibold text-slate-950">
-                          <span className="flex h-6 w-6 items-center justify-center rounded bg-slate-900 text-xs text-white">3</span>
+                          <span className="flex items-center justify-center w-6 h-6 text-xs text-white rounded bg-slate-900">3</span>
                           Paste embed code into website
                         </div>
                         <p className="mt-1 text-sm text-slate-600">
                           Add the code before the closing body tag. Replace localhost URLs with deployed URLs in production.
                         </p>
                       </div>
-                      <div className="rounded border border-slate-200 bg-slate-50 p-4">
+                      <div className="p-4 border rounded border-slate-200 bg-slate-50">
                         <div className="flex items-center gap-2 text-sm font-semibold text-slate-950">
-                          <span className="flex h-6 w-6 items-center justify-center rounded bg-slate-900 text-xs text-white">4</span>
+                          <span className="flex items-center justify-center w-6 h-6 text-xs text-white rounded bg-slate-900">4</span>
                           Test from this dashboard
                         </div>
                         <p className="mt-1 text-sm text-slate-600">
@@ -1962,8 +2286,8 @@ npm.cmd run build:widget`}
                     </div>
                     <div className="space-y-4">
                       <div>
-                        <div className="mb-2 flex items-center justify-between">
-                          <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-xs font-semibold tracking-wide uppercase text-slate-500">
                             Embed Code
                           </span>
                           <SecondaryButton onClick={copyWidgetSnippet}>
@@ -1980,20 +2304,20 @@ npm.cmd run build:widget`}
                         )}
                       </div>
                       <div>
-                        <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        <div className="mb-2 text-xs font-semibold tracking-wide uppercase text-slate-500">
                           Small Preview
                         </div>
                         <div className="relative h-[360px] overflow-hidden rounded border border-slate-200 bg-slate-100 p-4">
-                          <div className="rounded border border-slate-200 bg-white p-4">
+                          <div className="p-4 bg-white border rounded border-slate-200">
                             <h3 className="text-lg font-bold text-slate-950">{selectedCompany.name}</h3>
                             <p className="mt-1 text-sm text-slate-500">Customer website page</p>
                           </div>
                           <div className="absolute bottom-20 right-4 flex h-[220px] w-[250px] flex-col overflow-hidden rounded border border-slate-200 bg-white shadow-xl">
-                            <div className="bg-slate-900 px-3 py-2 text-white">
+                            <div className="px-3 py-2 text-white bg-slate-900">
                               <div className="text-xs font-bold">{selectedCompany.name} Support</div>
                               <div className="text-[11px] text-slate-300">Chat widget panel</div>
                             </div>
-                            <div className="flex-1 space-y-2 bg-slate-50 p-3">
+                            <div className="flex-1 p-3 space-y-2 bg-slate-50">
                               <div className="max-w-[85%] rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700">
                                 Hi, how can I help?
                               </div>
@@ -2001,13 +2325,13 @@ npm.cmd run build:widget`}
                                 Ask a question
                               </div>
                             </div>
-                            <div className="border-t border-slate-200 p-2">
-                              <div className="h-8 rounded border border-slate-200 bg-white px-2 text-xs leading-8 text-slate-400">
+                            <div className="p-2 border-t border-slate-200">
+                              <div className="h-8 px-2 text-xs leading-8 bg-white border rounded border-slate-200 text-slate-400">
                                 Type your question
                               </div>
                             </div>
                           </div>
-                          <div className="absolute bottom-4 right-4 flex h-14 w-14 items-center justify-center rounded-full bg-slate-900 text-white shadow-xl">
+                          <div className="absolute flex items-center justify-center text-white rounded-full shadow-xl bottom-4 right-4 h-14 w-14 bg-slate-900">
                             <MessageSquare size={22} />
                           </div>
                         </div>

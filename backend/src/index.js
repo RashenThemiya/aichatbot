@@ -15,7 +15,9 @@ const companiesRouter = require("./routes/companies");
 const documentsRouter = require("./routes/documents");
 const chatRouter = require("./routes/chat");
 const whatsappIntegrationsRouter = require("./routes/whatsappIntegrations");
+const smsIntegrationsRouter = require("./routes/smsIntegrations");
 const whatsappRoutes = require("./modules/whatsapp/whatsapp.routes");
+const smsRoutes = require("./modules/sms/sms.routes");
 
 const app = express();
 
@@ -51,7 +53,9 @@ app.use("/api/companies/:companyId/documents", requireAuth, documentsRouter);
 app.use("/api/companies/:companyId/chat", requireAuth, chatRouter);
 app.use("/widget/companies/:companyId/chat", chatRouter);
 app.use("/api/companies/:companyId/whatsapp-integration", whatsappIntegrationsRouter);
+app.use("/api/companies/:companyId/sms-integration", requireAuth, smsIntegrationsRouter);
 app.use("/api/whatsapp", whatsappRoutes);
+app.use("/api/sms", smsRoutes);
 
 app.use((err, _req, res, _next) => {
   if (err instanceof multer.MulterError) {
