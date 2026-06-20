@@ -510,17 +510,59 @@ export default function App() {
     setNotice("Widget embed code copied");
   }
 
+  function jsString(value) {
+    return JSON.stringify(String(value || ""));
+  }
+
   function widgetSnippet() {
     if (!selectedCompany) return "";
+
+    const apiKey = widgetApiKeyInput.trim() || "PASTE_WIDGET_API_KEY";
+    const companyName = selectedCompany.name || "Company";
+
     return `<script>
+  async function getChatbotExternalUserToken() {
+    try {
+      const response = await fetch("/api/chatbot-user-token", {
+        method: "GET",
+        credentials: "include"
+      });
+
+      if (!response.ok) {
+        return "";
+      }
+
+      const data = await response.json();
+      return data.token || "";
+    } catch (error) {
+      return "";
+    }
+  }
+
   window.RAG_CHAT_WIDGET = {
-    apiBaseUrl: "http://localhost:3000",
-    companyId: "${selectedCompany._id}",
-    apiKey: "${widgetApiKeyInput.trim() || "PASTE_WIDGET_API_KEY"}",
-    title: "${selectedCompany.name} Support",
+    apiBaseUrl: ${jsString(api.baseUrl)},
+    companyId: ${jsString(selectedCompany._id)},
+    apiKey: ${jsString(apiKey)},
+
+    title: ${jsString(`${companyName} Support`)},
     subtitle: "Ask us anything",
     accentColor: "#111827",
-    position: "right"
+    position: "right",
+
+    showExternalLogin: true,
+    externalLoginButtonText: "Login with Website Account",
+    getExternalUserToken: getChatbotExternalUserToken,
+    externalLoginUrl: "/login",
+
+    showGoogleLogin: true,
+    googleClientId: "PASTE_GOOGLE_CLIENT_ID",
+
+    allowGuest: true,
+    guestText: "Continue without Login",
+
+    welcomeText: ${jsString(`Welcome to ${companyName} Support`)},
+    loginText: "Login to load your saved chat history, or continue without login.",
+    greeting: "Hi, how can I help?"
   };
 </script>
 <script src="http://localhost:5173/dist-widget/rag-chat-widget.iife.js"></script>`;

@@ -3,6 +3,7 @@ const cors = require("cors");
 const mongoose = require("mongoose");
 const multer = require("multer");
 const fs = require("fs");
+const dns = require("dns");
 
 const config = require("./config");
 const ragClient = require("./services/ragClient");
@@ -17,6 +18,8 @@ const whatsappIntegrationsRouter = require("./routes/whatsappIntegrations");
 const whatsappRoutes = require("./modules/whatsapp/whatsapp.routes");
 
 const app = express();
+
+dns.setDefaultResultOrder("ipv4first");
 
 fs.mkdirSync(config.uploadDir, { recursive: true });
 
@@ -62,7 +65,9 @@ app.use((err, _req, res, _next) => {
 
 async function start() {
   try {
-    await mongoose.connect(config.mongodbUri);
+    await mongoose.connect(config.mongodbUri, {
+      serverSelectionTimeoutMS: 30000,
+    });
     console.log("MongoDB connected");
 
     const existingSuperAdmin = await AdminUser.findOne({ role: "superadmin" });
