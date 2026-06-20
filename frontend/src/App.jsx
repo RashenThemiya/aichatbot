@@ -32,6 +32,26 @@ const emptySmsForm = {
   phoneNumber: "",
   isActive: true,
 };
+
+const widgetEmbedModeOptions = [
+  {
+    value: "all",
+    label: "All Login Options",
+  },
+  {
+    value: "external",
+    label: "Company Account Login Only",
+  },
+  {
+    value: "google",
+    label: "Google Auth Login Only",
+  },
+  {
+    value: "guest",
+    label: "Without Login Only",
+  },
+];
+
 const emptyLoginForm = { email: "admin@example.com", password: "admin123" };
 const emptyAdminForm = {
   name: "",
@@ -165,6 +185,7 @@ export default function App() {
   const [chatResult, setChatResult] = useState(null);
   const [widgetKeyResult, setWidgetKeyResult] = useState(null);
   const [widgetApiKeyInput, setWidgetApiKeyInput] = useState("");
+  const [widgetEmbedMode, setWidgetEmbedMode] = useState("all");
   const [showWidgetPreview, setShowWidgetPreview] = useState(false);
   const [widgetPreviewOpen, setWidgetPreviewOpen] = useState(false);
   const [widgetTestMessage, setWidgetTestMessage] = useState("");
@@ -394,6 +415,7 @@ export default function App() {
       setChatResult(null);
       setWidgetKeyResult(null);
       setWidgetApiKeyInput("");
+      setWidgetEmbedMode("all");
       setShowWidgetPreview(false);
       setWidgetPreviewOpen(false);
     }
@@ -426,6 +448,7 @@ export default function App() {
     setSelectedConversation(null);
     setWidgetKeyResult(null);
     setWidgetApiKeyInput("");
+    setWidgetEmbedMode("all");
     setShowWidgetPreview(false);
     setWidgetPreviewOpen(false);
     setWhatsappIntegration(null);
@@ -531,6 +554,7 @@ export default function App() {
     setChatResult(null);
     setWidgetKeyResult(null);
     setWidgetApiKeyInput("");
+    setWidgetEmbedMode("all");
     setShowWidgetPreview(false);
     setWidgetPreviewOpen(false);
     setWhatsappIntegration(null);
@@ -563,15 +587,32 @@ export default function App() {
   }
 
   function jsString(value) {
-    return JSON.stringify(String(value || ""));
-  }
+  return JSON.stringify(String(value || ""));
+}
 
-  function widgetSnippet() {
-    if (!selectedCompany) return "";
+function widgetBaseConfigLines(apiKey, companyName) {
+  return `    apiBaseUrl: ${jsString(api.baseUrl)},
+    companyId: ${jsString(selectedCompany._id)},
+    apiKey: ${jsString(apiKey)},
 
-    const apiKey = widgetApiKeyInput.trim() || "PASTE_WIDGET_API_KEY";
-    const companyName = selectedCompany.name || "Company";
+    title: ${jsString(`${companyName} Support`)},
+    subtitle: "Ask us anything",
+    accentColor: "#111827",
+    position: "right",`;
+}
 
+function widgetScriptSrc() {
+  return `<script src="http://localhost:5173/dist-widget/rag-chat-widget.iife.js"></script>`;
+}
+
+function widgetSnippet() {
+  if (!selectedCompany) return "";
+
+  const apiKey = widgetApiKeyInput.trim() || "PASTE_WIDGET_API_KEY";
+  const companyName = selectedCompany.name || "Company";
+  const baseConfig = widgetBaseConfigLines(apiKey, companyName);
+
+  if (widgetEmbedMode === "external") {
     return `<script>
   async function getChatbotExternalUserToken() {
     try {
@@ -592,14 +633,94 @@ export default function App() {
   }
 
   window.RAG_CHAT_WIDGET = {
-    apiBaseUrl: ${jsString(api.baseUrl)},
-    companyId: ${jsString(selectedCompany._id)},
-    apiKey: ${jsString(apiKey)},
+${baseConfig}
 
-    title: ${jsString(`${companyName} Support`)},
-    subtitle: "Ask us anything",
-    accentColor: "#111827",
-    position: "right",
+    showExternalLogin: true,
+    externalLoginButtonText: "Login with Website Account",
+    getExternalUserToken: getChatbotExternalUserToken,
+    externalLoginUrl: "/login",
+
+    showGoogleLogin: false,
+    googleClientId: "",
+
+    allowGuest: false,
+    guestText: "Continue without Login",
+
+    welcomeText: ${jsString(`Welcome to ${companyName} Support`)},
+    loginText: "Login with your website account to load your saved chat history.",
+    greeting: "Hi, how can I help?"
+  };
+</script>
+${widgetScriptSrc()}`;
+  }
+
+  if (widgetEmbedMode === "google") {
+    return `<script>
+  window.RAG_CHAT_WIDGET = {
+${baseConfig}
+
+    showExternalLogin: false,
+    externalLoginButtonText: "",
+    externalLoginUrl: "",
+
+    showGoogleLogin: true,
+    googleClientId: "PASTE_GOOGLE_CLIENT_ID",
+
+    allowGuest: false,
+    guestText: "Continue without Login",
+
+    welcomeText: ${jsString(`Welcome to ${companyName} Support`)},
+    loginText: "Login with Google to load your saved chat history.",
+    greeting: "Hi, how can I help?"
+  };
+</script>
+${widgetScriptSrc()}`;
+  }
+
+  if (widgetEmbedMode === "guest") {
+    return `<script>
+  window.RAG_CHAT_WIDGET = {
+${baseConfig}
+
+    showExternalLogin: false,
+    externalLoginButtonText: "",
+    externalLoginUrl: "",
+
+    showGoogleLogin: false,
+    googleClientId: "",
+
+    allowGuest: true,
+    guestText: "Continue without Login",
+
+    welcomeText: ${jsString(`Welcome to ${companyName} Support`)},
+    loginText: "Continue without login to start chatting.",
+    greeting: "Hi, how can I help?"
+  };
+</script>
+${widgetScriptSrc()}`;
+  }
+
+  return `<script>
+  async function getChatbotExternalUserToken() {
+    try {
+      const response = await fetch("/api/chatbot-user-token", {
+        method: "GET",
+        credentials: "include"
+      });
+
+      if (!response.ok) {
+        return "";
+      }
+
+      const data = await response.json();
+      return data.token || "";
+    } catch (error) {
+      return "";
+    }
+  }
+
+  window.RAG_CHAT_WIDGET = {
+${baseConfig}
 
     showExternalLogin: true,
     externalLoginButtonText: "Login with Website Account",
@@ -617,8 +738,8 @@ export default function App() {
     greeting: "Hi, how can I help?"
   };
 </script>
-<script src="http://localhost:5173/dist-widget/rag-chat-widget.iife.js"></script>`;
-  }
+${widgetScriptSrc()}`;
+}
 
   async function handleWidgetTestChat(event) {
     event.preventDefault();
@@ -1478,6 +1599,26 @@ export default function App() {
                         <p className="mt-1 text-xs text-slate-500">
                           The full key is shown only once after generation. Paste it here anytime to test or copy embed code.
                         </p>
+                        
+                        <div className="mt-3">
+  <Field label="Embed code type">
+    <select
+      className="w-full h-10 px-3 text-sm transition bg-white border rounded outline-none border-slate-200 text-slate-900 focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
+      value={widgetEmbedMode}
+      onChange={(event) => setWidgetEmbedMode(event.target.value)}
+    >
+      {widgetEmbedModeOptions.map((option) => (
+        <option key={option.value} value={option.value}>
+          {option.label}
+        </option>
+      ))}
+    </select>
+  </Field>
+  <p className="mt-1 text-xs text-slate-500">
+    Select the login method needed by the company website before copying the embed code.
+  </p>
+</div>
+
                       </div>
                     </div>
                   </div>
@@ -2286,17 +2427,34 @@ npm.cmd run build:widget`}
                     </div>
                     <div className="space-y-4">
                       <div>
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="text-xs font-semibold tracking-wide uppercase text-slate-500">
-                            Embed Code
-                          </span>
-                          <SecondaryButton onClick={copyWidgetSnippet}>
-                            Copy
-                          </SecondaryButton>
-                        </div>
-                        <pre className="max-h-[330px] overflow-auto rounded border border-slate-200 bg-slate-950 p-4 text-xs leading-5 text-slate-100">
+                        <div className="mb-3">
+  <Field label="Embed code type">
+    <select
+      className="w-full h-10 px-3 text-sm transition bg-white border rounded outline-none border-slate-200 text-slate-900 focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
+      value={widgetEmbedMode}
+      onChange={(event) => setWidgetEmbedMode(event.target.value)}
+    >
+      {widgetEmbedModeOptions.map((option) => (
+        <option key={option.value} value={option.value}>
+          {option.label}
+        </option>
+      ))}
+    </select>
+  </Field>
+</div>
+
+<div className="flex items-center justify-between mb-2">
+  <span className="text-xs font-semibold tracking-wide uppercase text-slate-500">
+    Embed Code
+  </span>
+  <SecondaryButton onClick={copyWidgetSnippet}>
+    Copy
+  </SecondaryButton>
+</div>
+
+<pre className="max-h-[330px] overflow-auto rounded border border-slate-200 bg-slate-950 p-4 text-xs leading-5 text-slate-100">
 {widgetSnippet()}
-                        </pre>
+</pre>
                         {!widgetApiKeyInput.trim() && (
                           <p className="mt-2 text-xs text-amber-700">
                             Paste or generate a key first to replace PASTE_WIDGET_API_KEY automatically.
