@@ -11,6 +11,8 @@ body {
   min-width: 320px;
   background: #f5f7fb;
   color: #182033;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 button,
@@ -29,4 +31,9 @@ textarea:disabled {
 
 .scrollbar-thin {
   scrollbar-width: thin;
+}
+
+::selection {
+  background: #dbeafe;
+  color: #0f172a;
 }

@@ -1,20 +1,29 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   Building2,
   CheckCircle2,
+  Clipboard,
+  Code2,
+  ExternalLink,
   FileText,
   History,
+  KeyRound,
   Loader2,
+  LogOut,
   MessageSquare,
+  MoreVertical,
   Pencil,
+  Power,
   Plus,
   RefreshCcw,
   Search,
   Send,
+  Smile,
   Trash2,
   Upload,
   Users,
+  X,
   XCircle,
 } from "lucide-react";
 import { api, formatDate } from "./lib/api";
@@ -46,8 +55,11 @@ function StatusBadge({ status }) {
     failed: "bg-rose-50 text-rose-700 ring-rose-200",
     ok: "bg-emerald-50 text-emerald-700 ring-emerald-200",
     connected: "bg-emerald-50 text-emerald-700 ring-emerald-200",
+    active: "bg-emerald-50 text-emerald-700 ring-emerald-200",
     unavailable: "bg-rose-50 text-rose-700 ring-rose-200",
     disconnected: "bg-rose-50 text-rose-700 ring-rose-200",
+    inactive: "bg-slate-100 text-slate-600 ring-slate-200",
+    unknown: "bg-slate-100 text-slate-600 ring-slate-200",
   };
 
   return (
@@ -69,7 +81,7 @@ function IconButton({ title, children, className = "", ...props }) {
       title={title}
       aria-label={title}
       className={classNames(
-        "inline-flex h-9 w-9 items-center justify-center rounded border border-slate-200 bg-white text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50",
+        "inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-700 shadow-sm shadow-slate-200/60 transition hover:-translate-y-0.5 hover:border-slate-300 hover:bg-slate-50 hover:shadow",
         className
       )}
       {...props}
@@ -84,7 +96,7 @@ function PrimaryButton({ children, className = "", ...props }) {
     <button
       type="button"
       className={classNames(
-        "inline-flex h-10 items-center justify-center gap-2 rounded bg-slate-900 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800",
+        "inline-flex h-10 items-center justify-center gap-2 rounded-md bg-slate-900 px-4 text-sm font-semibold text-white shadow-sm shadow-slate-300/70 transition hover:-translate-y-0.5 hover:bg-slate-800 hover:shadow",
         className
       )}
       {...props}
@@ -99,7 +111,7 @@ function SecondaryButton({ children, className = "", ...props }) {
     <button
       type="button"
       className={classNames(
-        "inline-flex h-10 items-center justify-center gap-2 rounded border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50",
+        "inline-flex h-10 items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 shadow-sm shadow-slate-200/60 transition hover:-translate-y-0.5 hover:border-slate-300 hover:bg-slate-50 hover:shadow",
         className
       )}
       {...props}
@@ -123,7 +135,7 @@ function Field({ label, children }) {
 function TextInput(props) {
   return (
     <input
-      className="h-10 w-full rounded border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
+      className="h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
       {...props}
     />
   );
@@ -132,9 +144,51 @@ function TextInput(props) {
 function TextArea(props) {
   return (
     <textarea
-      className="min-h-24 w-full resize-y rounded border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
+      className="min-h-24 w-full resize-y rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
       {...props}
     />
+  );
+}
+
+function SelectInput(props) {
+  return (
+    <select
+      className="h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
+      {...props}
+    />
+  );
+}
+
+function StatCard({ icon: Icon, label, value, detail, tint = "bg-slate-100 text-slate-700" }) {
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm shadow-slate-200/70 transition hover:-translate-y-0.5 hover:shadow-md">
+      <div className="flex items-center gap-4">
+        <div className={classNames("flex h-14 w-14 shrink-0 items-center justify-center rounded-full", tint)}>
+          <Icon size={24} />
+        </div>
+        <div className="min-w-0">
+          <div className="text-sm font-semibold text-slate-500">{label}</div>
+          <div className="mt-1 text-3xl font-bold leading-none text-slate-950">{value}</div>
+          {detail && <div className="mt-2 text-xs font-medium text-slate-500">{detail}</div>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MiniMetric({ label, value, icon: Icon }) {
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm shadow-slate-200/60">
+      <div className="flex items-center gap-3">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-700">
+          <Icon size={17} />
+        </div>
+        <div className="min-w-0">
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</div>
+          <div className="mt-1 truncate text-lg font-bold text-slate-950">{value}</div>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -161,6 +215,10 @@ export default function App() {
   const [widgetApiKeyInput, setWidgetApiKeyInput] = useState("");
   const [showWidgetPreview, setShowWidgetPreview] = useState(false);
   const [widgetPreviewOpen, setWidgetPreviewOpen] = useState(false);
+  const [widgetDragOffset, setWidgetDragOffset] = useState({ x: 0, y: 0 });
+  const [widgetDragging, setWidgetDragging] = useState(false);
+  const widgetDraggingRef = useRef(false);
+  const widgetDragStartRef = useRef({ pointerX: 0, pointerY: 0, offsetX: 0, offsetY: 0 });
   const [widgetTestMessage, setWidgetTestMessage] = useState("");
   const [widgetTestMessages, setWidgetTestMessages] = useState([
     { role: "assistant", content: "Hi, how can I help?" },
@@ -222,6 +280,13 @@ export default function App() {
     }
     return Array.from(groups.entries());
   }, [adminUsers]);
+  const indexedDocumentCount = documents.filter((document) => document.status === "indexed").length;
+  const failedDocumentCount = documents.filter((document) => document.status === "failed").length;
+  const totalDocumentChunks = documents.reduce(
+    (total, document) => total + (Number(document.chunksIndexed) || 0),
+    0
+  );
+  const selectedConversationMessageCount = selectedConversation?.messages?.length || 0;
 
   async function runTask(key, task, successMessage = "") {
     console.log("[task] start", key);
@@ -315,6 +380,50 @@ export default function App() {
     const result = await runTask("admins", () => api.adminUsers.list());
     if (result) setAdminUsers(result);
   }
+
+  const handleWidgetDragMove = useCallback((event) => {
+    if (!widgetDraggingRef.current) return;
+    const dx = event.clientX - widgetDragStartRef.current.pointerX;
+    const dy = event.clientY - widgetDragStartRef.current.pointerY;
+    setWidgetDragOffset({
+      x: widgetDragStartRef.current.offsetX + dx,
+      y: widgetDragStartRef.current.offsetY + dy,
+    });
+  }, []);
+
+  const handleWidgetDragEnd = useCallback(() => {
+    widgetDraggingRef.current = false;
+    setWidgetDragging(false);
+    window.removeEventListener("pointermove", handleWidgetDragMove);
+    window.removeEventListener("pointerup", handleWidgetDragEnd);
+  }, [handleWidgetDragMove]);
+
+  const handleWidgetDragStart = useCallback(
+    (event) => {
+      const target = event.target;
+      if (target instanceof Element && target.closest("button")) return;
+      if (event.pointerType === "mouse" && event.button !== 0) return;
+      event.preventDefault();
+      widgetDraggingRef.current = true;
+      setWidgetDragging(true);
+      widgetDragStartRef.current = {
+        pointerX: event.clientX,
+        pointerY: event.clientY,
+        offsetX: widgetDragOffset.x,
+        offsetY: widgetDragOffset.y,
+      };
+      window.addEventListener("pointermove", handleWidgetDragMove);
+      window.addEventListener("pointerup", handleWidgetDragEnd);
+    },
+    [handleWidgetDragEnd, handleWidgetDragMove, widgetDragOffset]
+  );
+
+  useEffect(() => {
+    return () => {
+      window.removeEventListener("pointermove", handleWidgetDragMove);
+      window.removeEventListener("pointerup", handleWidgetDragEnd);
+    };
+  }, [handleWidgetDragEnd, handleWidgetDragMove]);
 
   useEffect(() => {
     loadHealth();
@@ -508,6 +617,13 @@ export default function App() {
     const snippet = widgetSnippet();
     await navigator.clipboard.writeText(snippet);
     setNotice("Widget embed code copied");
+  }
+
+  async function copyWidgetKey() {
+    const key = widgetKeyResult?.apiKey || widgetApiKeyInput.trim();
+    if (!key) return;
+    await navigator.clipboard.writeText(key);
+    setNotice("Widget API key copied");
   }
 
   function widgetSnippet() {
@@ -771,10 +887,10 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#f5f7fb]">
-      <header className="border-b border-slate-200 bg-white">
-        <div className="mx-auto flex max-w-[1500px] flex-col gap-4 px-4 py-4 lg:flex-row lg:items-center lg:justify-between lg:px-6">
+      <header className="sticky top-0 z-30 border-b border-slate-200/80 bg-white/95 shadow-sm shadow-slate-200/70 backdrop-blur">
+        <div className="mx-auto flex w-full max-w-[1800px] flex-col gap-4 px-4 py-4 lg:flex-row lg:items-center lg:justify-between lg:px-6">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded bg-slate-900 text-white">
+            <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-slate-900 text-white shadow-lg shadow-slate-300">
               <MessageSquare size={20} />
             </div>
             <div>
@@ -783,8 +899,14 @@ export default function App() {
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <span className="rounded bg-slate-100 px-3 py-2 text-sm font-semibold text-slate-700">
-              {currentUser.name} · {currentUser.role}
+            <span className="inline-flex min-h-10 items-center gap-3 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm shadow-slate-200/60">
+              <span className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-100 text-slate-700">
+                <Users size={16} />
+              </span>
+              <span className="leading-tight">
+                <span className="block text-slate-900">{currentUser.name}</span>
+                <span className="block text-xs font-medium text-slate-500">{currentUser.role}</span>
+              </span>
             </span>
             {health && (
               <>
@@ -794,9 +916,12 @@ export default function App() {
             )}
             <SecondaryButton onClick={loadHealth} disabled={loading.health}>
               {loading.health ? <Loader2 className="animate-spin" size={16} /> : <Activity size={16} />}
-              Check
+              System Check
             </SecondaryButton>
-            <SecondaryButton onClick={handleLogout}>Logout</SecondaryButton>
+            <SecondaryButton onClick={handleLogout}>
+              <LogOut size={16} />
+              Logout
+            </SecondaryButton>
           </div>
         </div>
       </header>
@@ -859,7 +984,7 @@ export default function App() {
 
       {showWidgetPreview && selectedCompany && widgetApiKeyInput.trim() && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 px-4 py-6">
-          <section className="flex h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded border border-slate-200 bg-white shadow-xl">
+          <section className="flex h-[80vh] w-full max-w-5xl flex-col overflow-hidden rounded border border-slate-200 bg-white shadow-xl">
             <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
               <div className="flex items-center gap-2">
                 <MessageSquare size={18} />
@@ -873,7 +998,7 @@ export default function App() {
               </IconButton>
             </div>
             <div className="relative min-h-0 flex-1 bg-slate-100 p-6">
-              <div className="min-h-[460px] rounded border border-slate-200 bg-white p-6 shadow-sm">
+              <div className="min-h-[360px] rounded border border-slate-200 bg-white p-6 shadow-sm">
                 <h1 className="text-2xl font-bold text-slate-950">{selectedCompany.name}</h1>
                 <p className="mt-2 text-sm text-slate-500">
                   Example customer website page. Click the floating chat button in the bottom-right corner.
@@ -890,52 +1015,92 @@ export default function App() {
                 </div>
               </div>
               {widgetPreviewOpen && (
-              <div className="absolute bottom-24 right-6 flex h-[560px] w-[380px] max-w-[calc(100%-48px)] flex-col overflow-hidden rounded border border-slate-200 bg-white shadow-2xl">
-                <div className="bg-slate-900 px-4 py-3 text-white">
+              <div
+                className="absolute flex h-[520px] w-[380px] max-w-[calc(100%-48px)] flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-2xl shadow-slate-950/25"
+                style={{ right: 100 - widgetDragOffset.x, bottom: 50 - widgetDragOffset.y }}
+              >
+                <div
+                  className={classNames(
+                    "bg-slate-950 px-4 py-3 text-white",
+                    widgetDragging ? "cursor-grabbing" : "cursor-grab"
+                  )}
+                  onPointerDown={handleWidgetDragStart}
+                >
                   <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <div className="text-sm font-bold">{selectedCompany.name} Support</div>
-                      <div className="text-xs text-slate-300">Widget test mode</div>
+                    <div className="flex min-w-0 items-center gap-3">
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/10 text-white ring-1 ring-white/10">
+                        <MessageSquare size={18} />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-bold">{selectedCompany.name} Support</div>
+                        <div className="mt-0.5 text-[11px] text-slate-300">Widget test mode</div>
+                      </div>
                     </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <button
+                        type="button"
+                        className="flex h-9 w-9 items-center justify-center rounded-md border border-white/10 bg-white/5 text-white transition hover:bg-white/10"
+                        title="More options"
+                        aria-label="More options"
+                      >
+                        <MoreVertical size={18} />
+                      </button>
                     <button
                       type="button"
-                      className="rounded border border-white/20 px-2 py-1 text-xs text-white"
+                        className="flex h-9 w-9 items-center justify-center rounded-md border border-white/10 bg-white/5 text-white transition hover:bg-white/10"
+                        title="Close chat"
+                        aria-label="Close chat"
                       onClick={() => setWidgetPreviewOpen(false)}
                     >
-                      Close
+                        <X size={18} />
                     </button>
+                    </div>
                   </div>
                 </div>
-                <div className="min-h-0 flex-1 space-y-3 overflow-y-auto bg-slate-50 p-4">
+                <div className="min-h-0 flex-1 space-y-4 overflow-y-auto bg-white p-4">
                   {widgetTestMessages.map((message, index) => (
-                    <div
-                      key={`${message.role}-${index}`}
-                      className={classNames(
-                        "max-w-[86%] rounded px-3 py-2 text-sm leading-6",
-                        message.role === "user"
-                          ? "ml-auto bg-slate-900 text-white"
-                          : "border border-slate-200 bg-white text-slate-800"
-                      )}
-                    >
-                      <p className="whitespace-pre-wrap">{message.content}</p>
-                      {message.sources?.length > 0 && (
-                        <div className="mt-2 border-t border-slate-200 pt-2 text-xs text-slate-500">
-                          Sources: {message.sources.map((source) => source.documentName).filter(Boolean).join(", ")}
+                    <div key={`${message.role}-${index}`} className={classNames("flex gap-3", message.role === "user" && "justify-end")}>
+                      {message.role !== "user" && (
+                        <div className="mt-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-950 text-white shadow-sm">
+                          <MessageSquare size={17} />
                         </div>
                       )}
+                      <div className={classNames("max-w-[78%]", message.role === "user" && "ml-auto")}>
+                        <div
+                          className={classNames(
+                            "rounded-lg px-4 py-3 text-sm leading-6 shadow-sm",
+                            message.role === "user"
+                              ? "bg-slate-950 text-white"
+                              : "border border-slate-200 bg-white text-slate-800 shadow-slate-200/70"
+                          )}
+                        >
+                          <p className="whitespace-pre-wrap">{message.content}</p>
+                          {message.sources?.length > 0 && (
+                            <div className="mt-2 border-t border-slate-200 pt-2 text-xs text-slate-500">
+                              Sources: {message.sources.map((source) => source.documentName).filter(Boolean).join(", ")}
+                            </div>
+                          )}
+                        </div>
+                        <div className={classNames("mt-2 text-xs text-slate-400", message.role === "user" && "text-right")}>
+                          {new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                        </div>
+                      </div>
                     </div>
                   ))}
                 </div>
-                <form className="flex gap-2 border-t border-slate-200 bg-white p-3" onSubmit={handleWidgetTestChat}>
-                  <input
-                    className="min-w-0 flex-1 rounded border border-slate-200 px-3 text-sm outline-none focus:border-slate-500"
-                    value={widgetTestMessage}
-                    onChange={(event) => setWidgetTestMessage(event.target.value)}
-                    placeholder="Type test message"
-                  />
+                <form className="flex gap-2 border-t border-slate-200 bg-white p-4" onSubmit={handleWidgetTestChat}>
+                  <div className="relative min-w-0 flex-1">
+                    <input
+                      className="h-11 w-full rounded-md border border-slate-200 bg-white px-4 pr-11 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
+                      value={widgetTestMessage}
+                      onChange={(event) => setWidgetTestMessage(event.target.value)}
+                      placeholder="Type test message"
+                    />
+                    <Smile className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" size={19} />
+                  </div>
                   <button
                     type="submit"
-                    className="rounded bg-slate-900 px-4 text-sm font-semibold text-white"
+                    className="h-11 rounded-md bg-slate-950 px-5 text-sm font-semibold text-white shadow-sm shadow-slate-300 transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
                     disabled={loading.widgetTest}
                   >
                     {loading.widgetTest ? "..." : "Send"}
@@ -957,10 +1122,10 @@ export default function App() {
         </div>
       )}
 
-      <main className="mx-auto grid max-w-[1500px] grid-cols-1 gap-4 px-4 py-4 lg:grid-cols-[320px_minmax(0,1fr)] lg:px-6">
+      <main className="mx-auto grid w-full max-w-[1800px] grid-cols-1 gap-6 px-4 py-6 lg:grid-cols-[260px_minmax(0,1fr)] lg:px-6">
         <aside className="space-y-4">
-          <section className="rounded border border-slate-200 bg-white p-2">
-            <div className="px-2 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+          <section className="rounded-lg border border-slate-200 bg-white p-2 shadow-sm shadow-slate-200/70">
+            <div className="px-2 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
               Navigation
             </div>
             <nav className="space-y-1">
@@ -968,7 +1133,7 @@ export default function App() {
                 <button
                   type="button"
                   onClick={backToSuperAdmin}
-                  className="mb-2 flex w-full items-center gap-3 rounded border border-slate-200 bg-white px-3 py-3 text-left text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                  className="mb-2 flex w-full items-center gap-3 rounded-md border border-slate-200 bg-white px-3 py-3 text-left text-sm font-semibold text-slate-700 shadow-sm shadow-slate-200/60 transition hover:bg-slate-50"
                 >
                   <Building2 size={17} />
                   Superadmin Home
@@ -982,9 +1147,9 @@ export default function App() {
                     type="button"
                     onClick={() => setActiveSection(item.id)}
                     className={classNames(
-                      "flex w-full items-center gap-3 rounded px-3 py-3 text-left text-sm font-semibold transition",
+                      "flex w-full items-center gap-3 rounded-md px-3 py-3 text-left text-sm font-semibold transition",
                       activeSection === item.id
-                        ? "bg-slate-900 text-white"
+                        ? "bg-slate-900 text-white shadow-md shadow-slate-300"
                         : "text-slate-700 hover:bg-slate-100"
                     )}
                   >
@@ -1046,51 +1211,6 @@ export default function App() {
           </section>
           )}
 
-          {isSuperAdmin && !selectedCompany && activeSection === "companies" && (
-          <section className="rounded border border-slate-200 bg-white p-4">
-            <div className="mb-3 flex items-center gap-2">
-              <Plus size={18} />
-              <h2 className="font-semibold text-slate-950">New Company</h2>
-            </div>
-            <form className="space-y-3" onSubmit={handleCreateCompany}>
-              <Field label="Name">
-                <TextInput
-                  value={companyForm.name}
-                  onChange={(event) =>
-                    setCompanyForm((current) => ({ ...current, name: event.target.value }))
-                  }
-                  placeholder="Acme Support"
-                  required
-                />
-              </Field>
-              <Field label="Slug optional">
-                <TextInput
-                  value={companyForm.slug}
-                  onChange={(event) =>
-                    setCompanyForm((current) => ({ ...current, slug: event.target.value }))
-                  }
-                  placeholder="acme-support"
-                />
-              </Field>
-              <Field label="Description">
-                <TextArea
-                  value={companyForm.description}
-                  onChange={(event) =>
-                    setCompanyForm((current) => ({
-                      ...current,
-                      description: event.target.value,
-                    }))
-                  }
-                  placeholder="Customer support knowledge base"
-                />
-              </Field>
-              <PrimaryButton type="submit" className="w-full" disabled={loading.companies}>
-                {loading.companies ? <Loader2 className="animate-spin" size={16} /> : <Plus size={16} />}
-                Create
-              </PrimaryButton>
-            </form>
-          </section>
-          )}
         </aside>
 
         <section className="space-y-4">
@@ -1110,24 +1230,33 @@ export default function App() {
           {isSuperAdmin && !selectedCompany && activeSection !== "admins" ? (
             <>
               {activeSection === "dashboard" && (
-                <section className="grid gap-4 md:grid-cols-3">
-                  <div className="rounded border border-slate-200 bg-white p-4">
-                    <div className="text-sm font-semibold text-slate-500">Companies</div>
-                    <div className="mt-2 text-3xl font-bold text-slate-950">{companies.length}</div>
-                  </div>
-                  <div className="rounded border border-slate-200 bg-white p-4">
-                    <div className="text-sm font-semibold text-slate-500">Admins</div>
-                    <div className="mt-2 text-3xl font-bold text-slate-950">{adminUsers.length}</div>
-                  </div>
-                  <div className="rounded border border-slate-200 bg-white p-4">
-                    <div className="text-sm font-semibold text-slate-500">Backend</div>
-                    <div className="mt-2"><StatusBadge status={health?.mongodb || "unknown"} /></div>
-                  </div>
+                <section className="grid gap-5 md:grid-cols-3">
+                  <StatCard
+                    icon={Building2}
+                    label="Companies"
+                    value={companies.length}
+                    detail="Total companies"
+                    tint="bg-slate-100 text-slate-700"
+                  />
+                  <StatCard
+                    icon={Users}
+                    label="Admins"
+                    value={adminUsers.length}
+                    detail="Total admin users"
+                    tint="bg-slate-100 text-slate-700"
+                  />
+                  <StatCard
+                    icon={Power}
+                    label="Backend"
+                    value={health?.mongodb === "ok" ? "Active" : "Check"}
+                    detail="Database status"
+                    tint="bg-emerald-50 text-emerald-600"
+                  />
                 </section>
               )}
               {activeSection === "dashboard" && (
-                <section className="rounded border border-slate-200 bg-white">
-                  <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+                <section className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm shadow-slate-200/70">
+                  <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50/70 px-5 py-4">
                     <div className="flex items-center gap-2">
                       <Building2 size={18} />
                       <h2 className="font-semibold text-slate-950">Companies</h2>
@@ -1137,13 +1266,13 @@ export default function App() {
                       Manage
                     </SecondaryButton>
                   </div>
-                  <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-3">
+                  <div className="grid gap-4 p-5 md:grid-cols-2 xl:grid-cols-3">
                     {companies.map((company) => (
                       <button
                         type="button"
                         key={company._id}
                         onClick={() => openCompanyDashboard(company._id)}
-                        className="rounded border border-slate-200 bg-white p-4 text-left transition hover:border-slate-400 hover:shadow-sm"
+                        className="rounded-lg border border-slate-200 bg-white p-4 text-left shadow-sm shadow-slate-200/50 transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md"
                       >
                         <div className="flex items-start justify-between gap-3">
                           <div>
@@ -1161,8 +1290,8 @@ export default function App() {
                 </section>
               )}
               {activeSection === "companies" && (
-                <section className="rounded border border-slate-200 bg-white">
-                  <div className="flex flex-col gap-3 border-b border-slate-200 px-4 py-3 md:flex-row md:items-center md:justify-between">
+                <section className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm shadow-slate-200/70">
+                  <div className="flex flex-col gap-3 border-b border-slate-200 bg-slate-50/70 px-5 py-4 md:flex-row md:items-center md:justify-between">
                     <div className="flex items-center gap-2">
                       <Building2 size={18} />
                       <h2 className="font-semibold text-slate-950">Company Management</h2>
@@ -1177,7 +1306,7 @@ export default function App() {
                       </PrimaryButton>
                     </div>
                   </div>
-                  <div className="overflow-x-auto">
+                  <div className="overflow-x-auto p-2">
                     <table className="min-w-full divide-y divide-slate-200 text-sm">
                       <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
                         <tr>
@@ -1190,7 +1319,7 @@ export default function App() {
                       </thead>
                       <tbody className="divide-y divide-slate-100">
                         {companies.map((company) => (
-                          <tr key={company._id}>
+                          <tr key={company._id} className="transition hover:bg-slate-50">
                             <td className="px-4 py-3">
                               <div className="font-semibold text-slate-900">{company.name}</div>
                               <div className="max-w-md truncate text-xs text-slate-500">
@@ -1218,163 +1347,204 @@ export default function App() {
               )}
             </>
           ) : !selectedCompany && !(isSuperAdmin && activeSection === "admins") ? (
-            <div className="rounded border border-slate-200 bg-white p-10 text-center">
+            <div className="rounded-lg border border-dashed border-slate-200 bg-white p-10 text-center shadow-sm shadow-slate-200/70">
               <Building2 className="mx-auto mb-3 text-slate-400" size={34} />
               <h2 className="text-lg font-semibold text-slate-950">Select or create a company</h2>
             </div>
           ) : (
             <>
               {activeSection === "dashboard" && (
-                <section className="grid gap-4 md:grid-cols-3">
-                  <div className="rounded border border-slate-200 bg-white p-4">
-                    <div className="text-sm font-semibold text-slate-500">Companies</div>
-                    <div className="mt-2 text-3xl font-bold text-slate-950">
-                      {isSuperAdmin ? companies.length : 1}
-                    </div>
-                  </div>
-                  <div className="rounded border border-slate-200 bg-white p-4">
-                    <div className="text-sm font-semibold text-slate-500">Documents</div>
-                    <div className="mt-2 text-3xl font-bold text-slate-950">{documents.length}</div>
-                  </div>
-                  <div className="rounded border border-slate-200 bg-white p-4">
-                    <div className="text-sm font-semibold text-slate-500">Conversations</div>
-                    <div className="mt-2 text-3xl font-bold text-slate-950">{conversations.length}</div>
-                  </div>
+                <section className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+                  <StatCard
+                    icon={Building2}
+                    label="Companies"
+                    value={isSuperAdmin ? companies.length : 1}
+                    detail="Total companies"
+                    tint="bg-slate-100 text-slate-700"
+                  />
+                  <StatCard
+                    icon={FileText}
+                    label="Documents"
+                    value={documents.length}
+                    detail="Total documents"
+                    tint="bg-slate-100 text-slate-700"
+                  />
+                  <StatCard
+                    icon={MessageSquare}
+                    label="Conversations"
+                    value={conversations.length}
+                    detail="Total conversations"
+                    tint="bg-slate-100 text-slate-700"
+                  />
                 </section>
               )}
 
               {(activeSection === "dashboard" || activeSection === "companies") && (
-              <section className="rounded border border-slate-200 bg-white p-4">
-                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                  <div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h2 className="text-2xl font-bold text-slate-950">{selectedCompany.name}</h2>
-                      <StatusBadge status={selectedCompany.isActive ? "active" : "inactive"} />
+              <section className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm shadow-slate-200/70">
+                <div className="h-1 bg-slate-900" />
+                <div className="p-5">
+                  <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <div className="flex h-12 w-12 items-center justify-center rounded-full bg-slate-100 text-slate-700">
+                          <Building2 size={22} />
+                        </div>
+                        <div className="min-w-0">
+                          <h2 className="truncate text-2xl font-bold text-slate-950">{selectedCompany.name}</h2>
+                          <p className="mt-1 text-sm text-slate-500">{selectedCompany.description || "No description"}</p>
+                        </div>
+                        <StatusBadge status={selectedCompany.isActive ? "active" : "inactive"} />
+                      </div>
+                      <p className="mt-3 break-all pl-0 text-xs text-slate-400 sm:pl-14">ID: {selectedCompany._id}</p>
                     </div>
-                    <p className="mt-1 text-sm text-slate-500">{selectedCompany.description || "No description"}</p>
-                    <p className="mt-2 text-xs text-slate-400">ID: {selectedCompany._id}</p>
-                    <div className="mt-4 rounded border border-slate-200 bg-slate-50 p-3">
-                      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                    <div className="flex flex-wrap gap-2 self-start">
+                      <SecondaryButton onClick={() => setEditingCompany((value) => !value)}>
+                        <Pencil size={16} />
+                        Edit
+                      </SecondaryButton>
+                      <SecondaryButton onClick={handleToggleCompany}>
+                        {selectedCompany.isActive ? <XCircle size={16} /> : <CheckCircle2 size={16} />}
+                        {selectedCompany.isActive ? "Disable" : "Enable"}
+                      </SecondaryButton>
+                      {isSuperAdmin && (
+                      <SecondaryButton
+                        className="text-rose-700 hover:bg-rose-50"
+                        onClick={handleDeleteCompany}
+                      >
+                        <Trash2 size={16} />
+                        Delete
+                      </SecondaryButton>
+                      )}
+                    </div>
+                  </div>
+                  <div className="mt-6 rounded-lg border border-slate-200 bg-white p-4 shadow-inner shadow-slate-100">
+                    <div className="flex flex-col gap-3">
+                      <div className="flex items-start gap-3">
+                        <div className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-100 text-slate-700">
+                          <KeyRound size={18} />
+                        </div>
                         <div>
-                          <div className="text-sm font-semibold text-slate-900">Widget API Key</div>
+                          <div className="text-base font-semibold text-slate-900">Widget API Key</div>
                           <div className="mt-1 text-xs text-slate-500">
                             Current key: {selectedCompany.widgetApiKeyPreview || "Not generated"}
                           </div>
                         </div>
-                        <div className="flex flex-wrap gap-2">
-                          <SecondaryButton onClick={handleGenerateWidgetApiKey}>
-                            <RefreshCcw size={16} />
-                            Generate / Rotate
-                          </SecondaryButton>
-                          <SecondaryButton
-                            onClick={copyWidgetSnippet}
-                          >
-                            Copy Embed
-                          </SecondaryButton>
-                          <SecondaryButton
-                            onClick={() => {
-                              setWidgetPreviewOpen(false);
-                              setShowWidgetPreview(true);
-                            }}
-                            disabled={!widgetApiKeyInput.trim()}
-                          >
-                            <MessageSquare size={16} />
-                            Test Widget
-                          </SecondaryButton>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <SecondaryButton onClick={handleGenerateWidgetApiKey}>
+                          <RefreshCcw size={16} />
+                          Generate / Rotate
+                        </SecondaryButton>
+                        <SecondaryButton onClick={copyWidgetSnippet}>
+                          <Code2 size={16} />
+                          Copy Embed
+                        </SecondaryButton>
+                        <SecondaryButton
+                          onClick={() => {
+                            setWidgetPreviewOpen(false);
+                            setShowWidgetPreview(true);
+                          }}
+                          disabled={!widgetApiKeyInput.trim()}
+                        >
+                          <ExternalLink size={16} />
+                          Test Widget
+                        </SecondaryButton>
+                      </div>
+                    {widgetKeyResult?.apiKey && (
+                      <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 p-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="text-xs font-semibold uppercase tracking-wide text-amber-700">
+                              Copy this key now
+                            </div>
+                            <code className="mt-2 block break-all text-xs text-amber-900">
+                              {widgetKeyResult.apiKey}
+                            </code>
+                          </div>
+                          <IconButton title="Copy widget API key" onClick={copyWidgetKey}>
+                            <Clipboard size={16} />
+                          </IconButton>
                         </div>
                       </div>
-                      {widgetKeyResult?.apiKey && (
-                        <div className="mt-3 rounded border border-amber-200 bg-amber-50 p-3">
-                          <div className="text-xs font-semibold uppercase tracking-wide text-amber-700">
-                            Copy this key now
-                          </div>
-                          <code className="mt-2 block break-all text-xs text-amber-900">
-                            {widgetKeyResult.apiKey}
-                          </code>
-                        </div>
-                      )}
-                      <div className="mt-3">
-                        <Field label="Widget API key for test/embed">
+                    )}
+                    <div className="mt-4">
+                      <Field label="Widget API key for test/embed">
+                        <div className="flex gap-2">
                           <TextInput
                             value={widgetApiKeyInput}
                             onChange={(event) => setWidgetApiKeyInput(event.target.value)}
                             placeholder="Paste generated widget API key here"
                           />
-                        </Field>
-                        <p className="mt-1 text-xs text-slate-500">
-                          The full key is shown only once after generation. Paste it here anytime to test or copy embed code.
-                        </p>
-                      </div>
+                          <IconButton title="Copy widget API key" onClick={copyWidgetKey} disabled={!widgetApiKeyInput.trim()}>
+                            <Clipboard size={16} />
+                          </IconButton>
+                        </div>
+                      </Field>
+                      <p className="mt-1 text-xs text-slate-500">
+                        The full key is shown only once after generation. Paste it here anytime to test or copy embed code.
+                      </p>
                     </div>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    <SecondaryButton onClick={() => setEditingCompany((value) => !value)}>
-                      <Pencil size={16} />
-                      Edit
-                    </SecondaryButton>
-                    <SecondaryButton onClick={handleToggleCompany}>
-                      {selectedCompany.isActive ? <XCircle size={16} /> : <CheckCircle2 size={16} />}
-                      {selectedCompany.isActive ? "Disable" : "Enable"}
-                    </SecondaryButton>
-                    {isSuperAdmin && (
-                    <SecondaryButton
-                      className="text-rose-700 hover:bg-rose-50"
-                      onClick={handleDeleteCompany}
-                    >
-                      <Trash2 size={16} />
-                      Delete
-                    </SecondaryButton>
-                    )}
                   </div>
                 </div>
 
-                {editingCompany && (
-                  <form className="mt-4 grid gap-3 border-t border-slate-200 pt-4 lg:grid-cols-2" onSubmit={handleUpdateCompany}>
-                    <Field label="Name">
-                      <TextInput
-                        value={companyForm.name}
-                        onChange={(event) =>
-                          setCompanyForm((current) => ({ ...current, name: event.target.value }))
-                        }
-                      />
-                    </Field>
-                    <Field label="Slug">
-                      <TextInput value={companyForm.slug} disabled />
-                    </Field>
-                    <div className="lg:col-span-2">
-                      <Field label="Description">
-                        <TextArea
-                          value={companyForm.description}
+                  {editingCompany && (
+                    <form className="mt-4 grid gap-3 border-t border-slate-200 pt-4 lg:grid-cols-2" onSubmit={handleUpdateCompany}>
+                      <Field label="Name">
+                        <TextInput
+                          value={companyForm.name}
                           onChange={(event) =>
-                            setCompanyForm((current) => ({
-                              ...current,
-                              description: event.target.value,
-                            }))
+                            setCompanyForm((current) => ({ ...current, name: event.target.value }))
                           }
                         />
                       </Field>
-                    </div>
-                    <div className="flex gap-2 lg:col-span-2">
-                      <PrimaryButton type="submit" disabled={loading.companies}>
-                        <CheckCircle2 size={16} />
-                        Save
-                      </PrimaryButton>
-                      <SecondaryButton onClick={() => setEditingCompany(false)}>Cancel</SecondaryButton>
-                    </div>
-                  </form>
-                )}
+                      <Field label="Slug">
+                        <TextInput value={companyForm.slug} disabled />
+                      </Field>
+                      <div className="lg:col-span-2">
+                        <Field label="Description">
+                          <TextArea
+                            value={companyForm.description}
+                            onChange={(event) =>
+                              setCompanyForm((current) => ({
+                                ...current,
+                                description: event.target.value,
+                              }))
+                            }
+                          />
+                        </Field>
+                      </div>
+                      <div className="flex gap-2 lg:col-span-2">
+                        <PrimaryButton type="submit" disabled={loading.companies}>
+                          <CheckCircle2 size={16} />
+                          Save
+                        </PrimaryButton>
+                        <SecondaryButton onClick={() => setEditingCompany(false)}>Cancel</SecondaryButton>
+                      </div>
+                    </form>
+                  )}
+                  </div>
               </section>
               )}
 
               {activeSection === "whatsapp" && (
-                <section className="rounded border border-slate-200 bg-white">
-                  <div className="flex flex-col gap-3 border-b border-slate-200 px-4 py-3 md:flex-row md:items-center md:justify-between">
-                    <div className="flex items-center gap-2">
-                      <MessageSquare size={18} />
-                      <h2 className="font-semibold text-slate-950">WhatsApp Integration</h2>
-                      {whatsappIntegration && (
-                        <StatusBadge status={whatsappIntegration.isActive ? "active" : "inactive"} />
-                      )}
+                <section className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm shadow-slate-200/70">
+                  <div className="h-1 bg-slate-900" />
+                  <div className="flex flex-col gap-3 border-b border-slate-200 bg-slate-50/70 px-5 py-4 md:flex-row md:items-center md:justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-11 w-11 items-center justify-center rounded-full bg-slate-100 text-slate-700">
+                        <MessageSquare size={20} />
+                      </div>
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h2 className="font-semibold text-slate-950">WhatsApp Integration</h2>
+                          {whatsappIntegration && (
+                            <StatusBadge status={whatsappIntegration.isActive ? "active" : "inactive"} />
+                          )}
+                        </div>
+                        <p className="mt-1 text-xs text-slate-500">
+                          Manage the Meta Cloud API connection for this company.
+                        </p>
+                      </div>
                     </div>
                     <div className="flex flex-wrap gap-2">
                       <IconButton title="Refresh WhatsApp integration" onClick={() => loadWhatsAppIntegration()}>
@@ -1399,8 +1569,26 @@ export default function App() {
                       )}
                     </div>
                   </div>
-                  <div className="grid gap-4 p-4 xl:grid-cols-[minmax(0,1fr)_360px]">
-                    <form className="space-y-4" onSubmit={handleSaveWhatsAppIntegration}>
+                  <div className="grid gap-5 p-5 xl:grid-cols-[minmax(0,1fr)_380px]">
+                    <div className="space-y-5">
+                    <div className="grid gap-4 md:grid-cols-3">
+                      <MiniMetric
+                        icon={MessageSquare}
+                        label="Integration"
+                        value={whatsappIntegration ? "Configured" : "Not set"}
+                      />
+                      <MiniMetric
+                        icon={CheckCircle2}
+                        label="Status"
+                        value={whatsappForm.isActive ? "Active" : "Inactive"}
+                      />
+                      <MiniMetric
+                        icon={History}
+                        label="Updated"
+                        value={formatDate(whatsappIntegration?.updatedAt) || "-"}
+                      />
+                    </div>
+                    <form className="space-y-4 rounded-lg border border-slate-200 bg-white p-4 shadow-inner shadow-slate-100" onSubmit={handleSaveWhatsAppIntegration}>
                       <div className="grid gap-4 md:grid-cols-2">
                         <Field label="WhatsApp phone number ID">
                           <TextInput
@@ -1416,7 +1604,7 @@ export default function App() {
                           />
                         </Field>
                         <Field label="Status">
-                          <label className="flex h-10 items-center gap-3 rounded border border-slate-200 bg-white px-3 text-sm text-slate-700">
+                          <label className="flex h-10 items-center gap-3 rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-700">
                             <input
                               type="checkbox"
                               className="h-4 w-4 rounded border-slate-300"
@@ -1468,9 +1656,10 @@ export default function App() {
                         </SecondaryButton>
                       </div>
                     </form>
+                    </div>
 
                     <aside className="space-y-3">
-                      <div className="rounded border border-slate-200 bg-slate-50 p-4">
+                      <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-inner shadow-slate-100">
                         <div className="text-sm font-semibold text-slate-900">Saved credential</div>
                         <dl className="mt-3 space-y-3 text-sm">
                           <div>
@@ -1503,7 +1692,7 @@ export default function App() {
                       </div>
 
                       {whatsappValidation && (
-                        <div className="rounded border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">
+                        <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">
                           <div className="font-semibold">Validation passed</div>
                           <div className="mt-2 text-xs leading-5">
                             {whatsappValidation.metaPhoneNumber?.display_phone_number ||
@@ -1523,8 +1712,8 @@ export default function App() {
               )}
 
               {isSuperAdmin && activeSection === "admins" && (
-                <section className="rounded border border-slate-200 bg-white">
-                  <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+                <section className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm shadow-slate-200/70">
+                  <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50/70 px-5 py-4">
                     <div className="flex items-center gap-2">
                       <Building2 size={18} />
                       <h2 className="font-semibold text-slate-950">Admin Users</h2>
@@ -1533,8 +1722,8 @@ export default function App() {
                       <RefreshCcw size={16} />
                     </IconButton>
                   </div>
-                  <div className="grid gap-4 p-4 xl:grid-cols-[360px_minmax(0,1fr)]">
-                    <form className="space-y-3" onSubmit={handleCreateAdmin}>
+                  <div className="grid gap-5 p-5 xl:grid-cols-[360px_minmax(0,1fr)]">
+                    <form className="space-y-3 rounded-lg border border-slate-200 bg-white p-4 shadow-inner shadow-slate-100" onSubmit={handleCreateAdmin}>
                       <Field label="Name">
                         <TextInput
                           value={adminForm.name}
@@ -1559,8 +1748,7 @@ export default function App() {
                         />
                       </Field>
                       <Field label="Role">
-                        <select
-                          className="h-10 w-full rounded border border-slate-200 bg-white px-3 text-sm"
+                        <SelectInput
                           value={adminForm.role}
                           onChange={(event) =>
                             setAdminForm((current) => ({ ...current, role: event.target.value }))
@@ -1568,12 +1756,11 @@ export default function App() {
                         >
                           <option value="company_admin">Company admin</option>
                           <option value="superadmin">Superadmin</option>
-                        </select>
+                        </SelectInput>
                       </Field>
                       {adminForm.role === "company_admin" && (
                         <Field label="Company">
-                          <select
-                            className="h-10 w-full rounded border border-slate-200 bg-white px-3 text-sm"
+                          <SelectInput
                             value={adminForm.companyId}
                             onChange={(event) =>
                               setAdminForm((current) => ({ ...current, companyId: event.target.value }))
@@ -1586,7 +1773,7 @@ export default function App() {
                                 {company.name}
                               </option>
                             ))}
-                          </select>
+                          </SelectInput>
                         </Field>
                       )}
                       <PrimaryButton type="submit" className="w-full" disabled={loading.admins}>
@@ -1594,7 +1781,7 @@ export default function App() {
                         Add Admin
                       </PrimaryButton>
                     </form>
-                    <div className="overflow-x-auto">
+                    <div className="overflow-x-auto rounded-lg border border-slate-200">
                       <table className="min-w-full divide-y divide-slate-200 text-sm">
                         <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
                           <tr>
@@ -1614,7 +1801,7 @@ export default function App() {
                                 </td>
                               </tr>
                               {admins.map((admin) => (
-                                <tr key={admin._id}>
+                                <tr key={admin._id} className="transition hover:bg-slate-50">
                                   <td className="px-4 py-3">
                                     <div className="font-semibold text-slate-900">{admin.name}</div>
                                     <div className="text-xs text-slate-500">{admin.email}</div>
@@ -1654,22 +1841,27 @@ export default function App() {
               )}
 
               {(activeSection === "documents" || activeSection === "chat") && (
-              <div className={classNames(
-                "grid gap-4",
-                activeSection === "chat" ? "xl:grid-cols-[420px_minmax(0,1fr)]" : "xl:grid-cols-1"
-              )}>
+              <div className="grid gap-4 xl:grid-cols-1">
                 {activeSection === "documents" && (
-                <section className="rounded border border-slate-200 bg-white">
-                  <div className="flex flex-col gap-3 border-b border-slate-200 px-4 py-3 md:flex-row md:items-center md:justify-between">
-                    <div className="flex items-center gap-2">
-                      <FileText size={18} />
-                      <h2 className="font-semibold text-slate-950">Documents</h2>
+                <section className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm shadow-slate-200/70">
+                  <div className="h-1 bg-slate-900" />
+                  <div className="flex flex-col gap-3 border-b border-slate-200 bg-slate-50/70 px-5 py-4 md:flex-row md:items-center md:justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-11 w-11 items-center justify-center rounded-full bg-slate-100 text-slate-700">
+                        <FileText size={20} />
+                      </div>
+                      <div>
+                        <h2 className="font-semibold text-slate-950">Document Management</h2>
+                        <p className="mt-1 text-xs text-slate-500">
+                          Upload, index, and refresh company knowledge sources.
+                        </p>
+                      </div>
                     </div>
                     <div className="flex gap-2">
                       <IconButton title="Refresh documents" onClick={() => loadDocuments()}>
                         <RefreshCcw size={16} />
                       </IconButton>
-                      <label className="inline-flex h-9 cursor-pointer items-center justify-center gap-2 rounded bg-slate-900 px-3 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800">
+                      <label className="inline-flex h-10 cursor-pointer items-center justify-center gap-2 rounded-md bg-slate-900 px-4 text-sm font-semibold text-white shadow-sm shadow-slate-300/70 transition hover:-translate-y-0.5 hover:bg-slate-800 hover:shadow">
                         <Upload size={16} />
                         Upload PDF
                         <input
@@ -1682,7 +1874,13 @@ export default function App() {
                       </label>
                     </div>
                   </div>
-                  <div className="overflow-x-auto">
+                  <div className="grid gap-4 border-b border-slate-200 p-5 md:grid-cols-2 xl:grid-cols-4">
+                    <MiniMetric icon={FileText} label="Documents" value={documents.length} />
+                    <MiniMetric icon={CheckCircle2} label="Indexed" value={indexedDocumentCount} />
+                    <MiniMetric icon={XCircle} label="Failed" value={failedDocumentCount} />
+                    <MiniMetric icon={Search} label="Chunks" value={totalDocumentChunks} />
+                  </div>
+                  <div className="overflow-x-auto p-2">
                     <table className="min-w-full divide-y divide-slate-200 text-sm">
                       <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
                         <tr>
@@ -1697,12 +1895,20 @@ export default function App() {
                         {documents.length === 0 ? (
                           <tr>
                             <td className="px-4 py-8 text-center text-slate-500" colSpan={5}>
-                              No documents uploaded.
+                              <div className="mx-auto flex max-w-sm flex-col items-center">
+                                <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-slate-100 text-slate-500">
+                                  <FileText size={22} />
+                                </div>
+                                <div className="font-semibold text-slate-800">No documents uploaded</div>
+                                <div className="mt-1 text-sm text-slate-500">
+                                  Upload a PDF to make it available for chat answers.
+                                </div>
+                              </div>
                             </td>
                           </tr>
                         ) : (
                           documents.map((document) => (
-                            <tr key={document._id}>
+                            <tr key={document._id} className="transition hover:bg-slate-50">
                               <td className="max-w-[320px] px-4 py-3">
                                 <div className="truncate font-medium text-slate-900">{document.originalName}</div>
                                 {document.indexError && (
@@ -1738,14 +1944,27 @@ export default function App() {
                 )}
 
                 {isSuperAdmin && activeSection === "chat" && (
-                <section className="rounded border border-slate-200 bg-white">
-                  <div className="border-b border-slate-200 px-4 py-3">
-                    <div className="flex items-center gap-2">
-                      <MessageSquare size={18} />
-                      <h2 className="font-semibold text-slate-950">Chat Test</h2>
+                <section className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm shadow-slate-200/70">
+                  <div className="h-1 bg-slate-900" />
+                  <div className="border-b border-slate-200 bg-slate-50/70 px-5 py-4">
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-11 w-11 items-center justify-center rounded-full bg-slate-100 text-slate-700">
+                        <MessageSquare size={20} />
+                      </div>
+                      <div>
+                        <h2 className="font-semibold text-slate-950">Chat Test</h2>
+                        <p className="mt-1 text-xs text-slate-500">
+                          Send a controlled test question against this company's indexed content.
+                        </p>
+                      </div>
                     </div>
                   </div>
-                  <form className="space-y-3 p-4" onSubmit={handleChat}>
+                  <div className="grid gap-4 border-b border-slate-200 p-5 md:grid-cols-3">
+                    <MiniMetric icon={FileText} label="Documents" value={documents.length} />
+                    <MiniMetric icon={History} label="Session" value={chatResult?.sessionId ? "Active" : "New"} />
+                    <MiniMetric icon={Search} label="Sources" value={chatResult?.sources?.length || 0} />
+                  </div>
+                  <form className="space-y-3 p-5" onSubmit={handleChat}>
                     <Field label="Session ID optional">
                       <TextInput
                         value={chatSessionId}
@@ -1767,15 +1986,20 @@ export default function App() {
                     </PrimaryButton>
                   </form>
                   {chatResult && (
-                    <div className="border-t border-slate-200 p-4">
-                      <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                        Answer
+                    <div className="border-t border-slate-200 bg-slate-50/60 p-5">
+                      <div className="mb-3 flex items-center gap-2">
+                        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-900 text-white">
+                          <MessageSquare size={16} />
+                        </div>
+                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                          Answer
+                        </div>
                       </div>
                       <p className="whitespace-pre-wrap text-sm leading-6 text-slate-800">{chatResult.answer}</p>
                       <div className="mt-4 text-xs text-slate-500">Session: {chatResult.sessionId}</div>
                       <div className="mt-4 space-y-2">
                         {(chatResult.sources || []).map((source, index) => (
-                          <div key={`${source.documentId}-${index}`} className="rounded border border-slate-200 bg-slate-50 p-3">
+                          <div key={`${source.documentId}-${index}`} className="rounded-md border border-slate-200 bg-white p-3 shadow-sm shadow-slate-200/50">
                             <div className="flex items-center justify-between gap-2">
                               <span className="truncate text-xs font-semibold text-slate-700">{source.documentName}</span>
                               <span className="text-xs text-slate-500">{source.score}</span>
@@ -1792,20 +2016,43 @@ export default function App() {
               )}
 
               {activeSection === "history" && (
-              <section className="rounded border border-slate-200 bg-white">
-                <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
-                  <div className="flex items-center gap-2">
-                    <History size={18} />
-                    <h2 className="font-semibold text-slate-950">Conversations</h2>
+              <section className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm shadow-slate-200/70">
+                <div className="h-1 bg-slate-900" />
+                <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50/70 px-5 py-4">
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-11 w-11 items-center justify-center rounded-full bg-slate-100 text-slate-700">
+                      <History size={20} />
+                    </div>
+                    <div>
+                      <h2 className="font-semibold text-slate-950">Chat History</h2>
+                      <p className="mt-1 text-xs text-slate-500">
+                        Review customer sessions, messages, and source citations.
+                      </p>
+                    </div>
                   </div>
                   <IconButton title="Refresh conversations" onClick={() => loadConversations()}>
                     <RefreshCcw size={16} />
                   </IconButton>
                 </div>
-                <div className="grid gap-0 md:grid-cols-[340px_minmax(0,1fr)]">
-                  <div className="max-h-[380px] overflow-y-auto border-b border-slate-200 p-2 md:border-b-0 md:border-r">
+                <div className="grid gap-4 border-b border-slate-200 p-5 md:grid-cols-3">
+                  <MiniMetric icon={History} label="Conversations" value={conversations.length} />
+                  <MiniMetric icon={MessageSquare} label="Messages" value={selectedConversationMessageCount} />
+                  <MiniMetric
+                    icon={Search}
+                    label="Selected"
+                    value={selectedConversation ? "Open" : "None"}
+                  />
+                </div>
+                <div className="grid min-h-[520px] gap-0 md:grid-cols-[360px_minmax(0,1fr)]">
+                  <div className="max-h-[640px] overflow-y-auto border-b border-slate-200 bg-slate-50/40 p-3 md:border-b-0 md:border-r">
                     {conversations.length === 0 ? (
-                      <p className="p-4 text-sm text-slate-500">No conversations yet.</p>
+                      <div className="rounded-lg border border-dashed border-slate-200 bg-white p-6 text-center text-sm text-slate-500">
+                        <div className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-full bg-slate-100 text-slate-500">
+                          <History size={20} />
+                        </div>
+                        <div className="font-semibold text-slate-800">No conversations yet</div>
+                        <div className="mt-1">New widget and WhatsApp chats will appear here.</div>
+                      </div>
                     ) : (
                       conversations.map((conversation) => (
                         <button
@@ -1813,8 +2060,8 @@ export default function App() {
                           key={conversation._id}
                           onClick={() => handleOpenConversation(conversation.sessionId)}
                           className={classNames(
-                            "mb-1 flex w-full items-center gap-3 rounded px-3 py-3 text-left text-sm transition hover:bg-slate-100",
-                            selectedConversation?.sessionId === conversation.sessionId && "bg-slate-100"
+                            "mb-2 flex w-full items-center gap-3 rounded-md border border-transparent bg-white px-3 py-3 text-left text-sm shadow-sm shadow-slate-200/40 transition hover:border-slate-200 hover:bg-slate-50",
+                            selectedConversation?.sessionId === conversation.sessionId && "border-slate-300 bg-slate-100"
                           )}
                         >
                           <Search className="shrink-0 text-slate-400" size={16} />
@@ -1828,19 +2075,21 @@ export default function App() {
                       ))
                     )}
                   </div>
-                  <div className="max-h-[380px] overflow-y-auto p-4 scrollbar-thin">
+                  <div className="max-h-[640px] overflow-y-auto p-5 scrollbar-thin">
                     {!selectedConversation ? (
-                      <p className="text-sm text-slate-500">Select a conversation to inspect messages.</p>
+                      <div className="flex min-h-[440px] items-center justify-center rounded-lg border border-dashed border-slate-200 bg-slate-50/60 p-8 text-center text-sm text-slate-500">
+                        Select a conversation to inspect messages.
+                      </div>
                     ) : (
                       <div className="space-y-3">
                         {selectedConversation.messages.map((message, index) => (
                           <div
                             key={`${message.role}-${index}`}
                             className={classNames(
-                              "rounded p-3",
+                              "rounded-lg p-3 shadow-sm",
                               message.role === "user"
                                 ? "bg-slate-900 text-white"
-                                : "border border-slate-200 bg-white text-slate-800"
+                                : "border border-slate-200 bg-white text-slate-800 shadow-slate-200/60"
                             )}
                           >
                             <div className="mb-1 text-xs font-semibold uppercase opacity-70">{message.role}</div>
@@ -1848,7 +2097,7 @@ export default function App() {
                             {message.sources?.length > 0 && (
                               <div className="mt-3 space-y-2">
                                 {message.sources.map((source, sourceIndex) => (
-                                  <div key={sourceIndex} className="rounded bg-slate-50 p-2 text-slate-700">
+                                  <div key={sourceIndex} className="rounded-md bg-slate-50 p-2 text-slate-700">
                                     <div className="text-xs font-semibold">{source.documentName}</div>
                                     <div className="mt-1 text-xs leading-5">{source.content}</div>
                                   </div>
@@ -1865,33 +2114,51 @@ export default function App() {
               )}
 
               {activeSection === "help" && (
-                <section className="rounded border border-slate-200 bg-white">
-                  <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
-                    <div className="flex items-center gap-2">
-                      <Search size={18} />
-                      <h2 className="font-semibold text-slate-950">Connect Website Widget</h2>
+                <section className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm shadow-slate-200/70">
+                  <div className="h-1 bg-slate-900" />
+                  <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50/70 px-5 py-4">
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-11 w-11 items-center justify-center rounded-full bg-slate-100 text-slate-700">
+                        <Search size={20} />
+                      </div>
+                      <div>
+                        <h2 className="font-semibold text-slate-950">Widget Help</h2>
+                        <p className="mt-1 text-xs text-slate-500">
+                          Copy embed code and preview how the website widget will appear.
+                        </p>
+                      </div>
                     </div>
                     <SecondaryButton onClick={copyWidgetSnippet}>
+                      <Code2 size={16} />
                       Copy Embed
                     </SecondaryButton>
                   </div>
-                  <div className="grid gap-4 p-4 xl:grid-cols-[minmax(0,1fr)_460px]">
+                  <div className="grid gap-4 border-b border-slate-200 p-5 md:grid-cols-3">
+                    <MiniMetric
+                      icon={KeyRound}
+                      label="API Key"
+                      value={widgetApiKeyInput.trim() ? "Ready" : "Needed"}
+                    />
+                    <MiniMetric icon={Code2} label="Embed" value="Script" />
+                    <MiniMetric icon={ExternalLink} label="Preview" value="Website" />
+                  </div>
+                  <div className="grid gap-5 p-5 xl:grid-cols-[minmax(0,1fr)_500px]">
                     <div className="space-y-4">
-                      <div className="rounded border border-slate-200 bg-slate-50 p-4">
+                      <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-inner shadow-slate-100">
                         <div className="flex items-center gap-2 text-sm font-semibold text-slate-950">
-                          <span className="flex h-6 w-6 items-center justify-center rounded bg-slate-900 text-xs text-white">1</span>
+                          <span className="flex h-7 w-7 items-center justify-center rounded-full bg-slate-900 text-xs text-white">1</span>
                           Generate widget API key
                         </div>
                         <p className="mt-1 text-sm text-slate-600">
                           Go to Company Dashboard and click Generate / Rotate. Copy the key when it appears.
                         </p>
                       </div>
-                      <div className="rounded border border-slate-200 bg-slate-50 p-4">
+                      <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-inner shadow-slate-100">
                         <div className="flex items-center gap-2 text-sm font-semibold text-slate-950">
-                          <span className="flex h-6 w-6 items-center justify-center rounded bg-slate-900 text-xs text-white">2</span>
+                          <span className="flex h-7 w-7 items-center justify-center rounded-full bg-slate-900 text-xs text-white">2</span>
                           Build and host widget file
                         </div>
-                        <pre className="mt-2 overflow-x-auto rounded bg-slate-900 p-3 text-xs text-white">
+                        <pre className="mt-3 overflow-x-auto rounded-md bg-slate-900 p-3 text-xs text-white shadow-sm">
 {`cd C:\\Users\\Rashen\\Desktop\\github\\RAG-System\\frontend
 npm.cmd run build:widget`}
                         </pre>
@@ -1899,18 +2166,18 @@ npm.cmd run build:widget`}
                           Upload `dist-widget/rag-chat-widget.iife.js` to your server, CDN, or static hosting.
                         </p>
                       </div>
-                      <div className="rounded border border-slate-200 bg-slate-50 p-4">
+                      <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-inner shadow-slate-100">
                         <div className="flex items-center gap-2 text-sm font-semibold text-slate-950">
-                          <span className="flex h-6 w-6 items-center justify-center rounded bg-slate-900 text-xs text-white">3</span>
+                          <span className="flex h-7 w-7 items-center justify-center rounded-full bg-slate-900 text-xs text-white">3</span>
                           Paste embed code into website
                         </div>
                         <p className="mt-1 text-sm text-slate-600">
                           Add the code before the closing body tag. Replace localhost URLs with deployed URLs in production.
                         </p>
                       </div>
-                      <div className="rounded border border-slate-200 bg-slate-50 p-4">
+                      <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-inner shadow-slate-100">
                         <div className="flex items-center gap-2 text-sm font-semibold text-slate-950">
-                          <span className="flex h-6 w-6 items-center justify-center rounded bg-slate-900 text-xs text-white">4</span>
+                          <span className="flex h-7 w-7 items-center justify-center rounded-full bg-slate-900 text-xs text-white">4</span>
                           Test from this dashboard
                         </div>
                         <p className="mt-1 text-sm text-slate-600">
@@ -1928,7 +2195,7 @@ npm.cmd run build:widget`}
                             Copy
                           </SecondaryButton>
                         </div>
-                        <pre className="max-h-[330px] overflow-auto rounded border border-slate-200 bg-slate-950 p-4 text-xs leading-5 text-slate-100">
+                        <pre className="max-h-[360px] overflow-auto rounded-lg border border-slate-800 bg-slate-950 p-4 text-xs leading-5 text-slate-100 shadow-inner">
 {widgetSnippet()}
                         </pre>
                         {!widgetApiKeyInput.trim() && (
@@ -1941,27 +2208,51 @@ npm.cmd run build:widget`}
                         <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
                           Small Preview
                         </div>
-                        <div className="relative h-[360px] overflow-hidden rounded border border-slate-200 bg-slate-100 p-4">
-                          <div className="rounded border border-slate-200 bg-white p-4">
+                        <div className="relative h-[380px] overflow-hidden rounded-lg border border-slate-200 bg-slate-100 p-4 shadow-inner shadow-slate-200">
+                          <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
                             <h3 className="text-lg font-bold text-slate-950">{selectedCompany.name}</h3>
                             <p className="mt-1 text-sm text-slate-500">Customer website page</p>
                           </div>
-                          <div className="absolute bottom-20 right-4 flex h-[220px] w-[250px] flex-col overflow-hidden rounded border border-slate-200 bg-white shadow-xl">
-                            <div className="bg-slate-900 px-3 py-2 text-white">
-                              <div className="text-xs font-bold">{selectedCompany.name} Support</div>
-                              <div className="text-[11px] text-slate-300">Chat widget panel</div>
-                            </div>
-                            <div className="flex-1 space-y-2 bg-slate-50 p-3">
-                              <div className="max-w-[85%] rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700">
-                                Hi, how can I help?
+                          <div className="absolute bottom-20 right-4 flex h-[250px] w-[280px] flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-xl">
+                            <div className="bg-slate-950 px-3 py-3 text-white">
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="flex min-w-0 items-center gap-2">
+                                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/10">
+                                    <MessageSquare size={15} />
+                                  </div>
+                                  <div className="min-w-0">
+                                    <div className="truncate text-xs font-bold">{selectedCompany.name} Support</div>
+                                    <div className="text-[11px] text-slate-300">Widget test mode</div>
+                                  </div>
+                                </div>
+                                <X className="shrink-0 text-slate-300" size={16} />
                               </div>
-                              <div className="ml-auto max-w-[85%] rounded bg-slate-900 px-2 py-1 text-xs text-white">
+                            </div>
+                            <div className="flex-1 space-y-2 bg-white p-3">
+                              <div className="flex gap-2">
+                                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-950 text-white">
+                                  <MessageSquare size={13} />
+                                </div>
+                                <div>
+                                  <div className="max-w-[170px] rounded-md border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 shadow-sm">
+                                    Hi, how can I help?
+                                  </div>
+                                  <div className="mt-1 text-[10px] text-slate-400">10:30 AM</div>
+                                </div>
+                              </div>
+                              <div className="ml-auto max-w-[85%] rounded-md bg-slate-950 px-3 py-2 text-xs text-white">
                                 Ask a question
                               </div>
                             </div>
                             <div className="border-t border-slate-200 p-2">
-                              <div className="h-8 rounded border border-slate-200 bg-white px-2 text-xs leading-8 text-slate-400">
-                                Type your question
+                              <div className="flex gap-2">
+                                <div className="relative h-8 min-w-0 flex-1 rounded-md border border-slate-200 bg-white px-2 pr-7 text-xs leading-8 text-slate-400">
+                                  Type your question
+                                  <Smile className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
+                                </div>
+                                <div className="h-8 rounded-md bg-slate-950 px-3 text-xs font-semibold leading-8 text-white">
+                                  Send
+                                </div>
                               </div>
                             </div>
                           </div>
