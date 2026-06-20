@@ -1,4 +1,4 @@
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:3000";
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "https://botbackend.pentarixlabs.com";
 
 let authToken = localStorage.getItem("rag_admin_token") || "";
 
@@ -150,7 +150,10 @@ export const api = {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       }),
-    conversations: (companyId) => request(`/api/companies/${companyId}/chat/conversations`),
+    conversations: (companyId, search = "") => {
+      const query = search ? `?search=${encodeURIComponent(search)}` : "";
+      return request(`/api/companies/${companyId}/chat/conversations${query}`);
+    },
     history: (companyId, sessionId) =>
       request(`/api/companies/${companyId}/chat/history/${sessionId}`),
   },

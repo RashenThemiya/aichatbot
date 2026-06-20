@@ -1,5 +1,5 @@
 const DEFAULTS = {
-  apiBaseUrl: "http://localhost:3000",
+  apiBaseUrl: "https://botbackend.pentarixlabs.com",
   companyId: "",
   title: "Support Chat",
   subtitle: "Ask from our knowledge base",

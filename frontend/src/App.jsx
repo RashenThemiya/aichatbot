@@ -1,4 +1,3 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
 import {
   Activity,
   Building2,
@@ -17,152 +16,28 @@ import {
   Users,
   XCircle,
 } from "lucide-react";
-import { api, formatDate } from "./lib/api";
-import { getAuthToken, setAuthToken } from "./lib/api";
-
-const emptyCompanyForm = { name: "", slug: "", description: "" };
-const emptyWhatsAppForm = {
-  phoneNumberId: "",
-  accessToken: "",
-  isActive: true,
-};
-const emptySmsForm = {
-  accountSid: "",
-  authToken: "",
-  phoneNumber: "",
-  isActive: true,
-};
-
-const widgetEmbedModeOptions = [
-  {
-    value: "all",
-    label: "All Login Options",
-  },
-  {
-    value: "external",
-    label: "Company Account Login Only",
-  },
-  {
-    value: "google",
-    label: "Google Auth Login Only",
-  },
-  {
-    value: "guest",
-    label: "Without Login Only",
-  },
-];
-
-const emptyLoginForm = { email: "admin@example.com", password: "admin123" };
-const emptyAdminForm = {
-  name: "",
-  email: "",
-  password: "",
-  role: "company_admin",
-  companyId: "",
-};
-
-function classNames(...values) {
-  return values.filter(Boolean).join(" ");
-}
-
-function StatusBadge({ status }) {
-  const styles = {
-    indexed: "bg-emerald-50 text-emerald-700 ring-emerald-200",
-    indexing: "bg-amber-50 text-amber-700 ring-amber-200",
-    failed: "bg-rose-50 text-rose-700 ring-rose-200",
-    ok: "bg-emerald-50 text-emerald-700 ring-emerald-200",
-    connected: "bg-emerald-50 text-emerald-700 ring-emerald-200",
-    unavailable: "bg-rose-50 text-rose-700 ring-rose-200",
-    disconnected: "bg-rose-50 text-rose-700 ring-rose-200",
-  };
-
-  return (
-    <span
-      className={classNames(
-        "inline-flex items-center rounded px-2 py-1 text-xs font-semibold ring-1",
-        styles[status] || "bg-slate-50 text-slate-700 ring-slate-200"
-      )}
-    >
-      {status || "-"}
-    </span>
-  );
-}
-
-function IconButton({ title, children, className = "", ...props }) {
-  return (
-    <button
-      type="button"
-      title={title}
-      aria-label={title}
-      className={classNames(
-        "inline-flex h-9 w-9 items-center justify-center rounded border border-slate-200 bg-white text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50",
-        className
-      )}
-      {...props}
-    >
-      {children}
-    </button>
-  );
-}
-
-function PrimaryButton({ children, className = "", ...props }) {
-  return (
-    <button
-      type="button"
-      className={classNames(
-        "inline-flex h-10 items-center justify-center gap-2 rounded bg-slate-900 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800",
-        className
-      )}
-      {...props}
-    >
-      {children}
-    </button>
-  );
-}
-
-function SecondaryButton({ children, className = "", ...props }) {
-  return (
-    <button
-      type="button"
-      className={classNames(
-        "inline-flex h-10 items-center justify-center gap-2 rounded border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50",
-        className
-      )}
-      {...props}
-    >
-      {children}
-    </button>
-  );
-}
-
-function Field({ label, children }) {
-  return (
-    <label className="block">
-      <span className="block mb-1 text-xs font-semibold tracking-wide uppercase text-slate-500">
-        {label}
-      </span>
-      {children}
-    </label>
-  );
-}
-
-function TextInput(props) {
-  return (
-    <input
-      className="w-full h-10 px-3 text-sm transition bg-white border rounded outline-none border-slate-200 text-slate-900 placeholder:text-slate-400 focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
-      {...props}
-    />
-  );
-}
-
-function TextArea(props) {
-  return (
-    <textarea
-      className="w-full px-3 py-2 text-sm transition bg-white border rounded outline-none resize-y min-h-24 border-slate-200 text-slate-900 placeholder:text-slate-400 focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
-      {...props}
-    />
-  );
-}
+import { Fragment, useEffect, useMemo, useState } from "react";
+import { AdminShell } from "./components/AdminShell";
+import { LoginPage } from "./components/LoginPage";
+import {
+  Field,
+  IconButton,
+  PrimaryButton,
+  SecondaryButton,
+  StatusBadge,
+  TextArea,
+  TextInput,
+} from "./components/ui";
+import {
+  emptyAdminForm,
+  emptyCompanyForm,
+  emptyLoginForm,
+  emptySmsForm,
+  emptyWhatsAppForm,
+  widgetEmbedModeOptions,
+} from "./constants/forms";
+import { api, formatDate, getAuthToken, setAuthToken } from "./lib/api";
+import { classNames } from "./utils/classNames";
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState(null);
@@ -176,6 +51,7 @@ export default function App() {
   const [selectedId, setSelectedId] = useState("");
   const [documents, setDocuments] = useState([]);
   const [conversations, setConversations] = useState([]);
+  const [conversationSearch, setConversationSearch] = useState("");
   const [selectedConversation, setSelectedConversation] = useState(null);
   const [companyForm, setCompanyForm] = useState(emptyCompanyForm);
   const [showCompanyModal, setShowCompanyModal] = useState(false);
@@ -303,12 +179,12 @@ export default function App() {
     if (result) setDocuments(result);
   }
 
-  async function loadConversations(companyId = selectedId) {
+  async function loadConversations(companyId = selectedId, search = conversationSearch) {
     if (!companyId) {
       setConversations([]);
       return;
     }
-    const result = await runTask("conversations", () => api.chat.conversations(companyId));
+    const result = await runTask("conversations", () => api.chat.conversations(companyId, search));
     if (result) setConversations(result);
   }
 
@@ -412,6 +288,7 @@ export default function App() {
       loadWhatsAppIntegration(selectedId);
       loadSmsIntegration(selectedId);
       setSelectedConversation(null);
+      setConversationSearch("");
       setChatResult(null);
       setWidgetKeyResult(null);
       setWidgetApiKeyInput("");
@@ -602,7 +479,7 @@ function widgetBaseConfigLines(apiKey, companyName) {
 }
 
 function widgetScriptSrc() {
-  return `<script src="http://localhost:5173/dist-widget/rag-chat-widget.iife.js"></script>`;
+  return `<script src="https://aichatbot.pentarixlabs.com/dist-widget/rag-chat-widget.iife.js"></script>`;
 }
 
 function widgetSnippet() {
@@ -969,6 +846,18 @@ ${widgetScriptSrc()}`;
     }
   }
 
+  async function handleConversationSearch(event) {
+    event.preventDefault();
+    setSelectedConversation(null);
+    await loadConversations(selectedId, conversationSearch.trim());
+  }
+
+  async function clearConversationSearch() {
+    setConversationSearch("");
+    setSelectedConversation(null);
+    await loadConversations(selectedId, "");
+  }
+
   async function handleOpenConversation(sessionId) {
     if (!selectedCompany) return;
     const result = await runTask("conversations", () =>
@@ -1020,81 +909,30 @@ ${widgetScriptSrc()}`;
 
   if (!currentUser) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[#f5f7fb] px-4">
-        <section className="w-full max-w-md p-6 bg-white border rounded shadow-sm border-slate-200">
-          <div className="mb-6">
-            <div className="flex items-center justify-center mb-3 text-white rounded h-11 w-11 bg-slate-900">
-              <MessageSquare size={21} />
-            </div>
-            <h1 className="text-2xl font-bold text-slate-950">Admin Login</h1>
-            <p className="mt-1 text-sm text-slate-500">{api.baseUrl}</p>
-          </div>
-          {error && (
-            <div className="px-3 py-2 mb-4 text-sm border rounded border-rose-200 bg-rose-50 text-rose-700">
-              {error}
-            </div>
-          )}
-          <form className="space-y-4" onSubmit={handleLogin}>
-            <Field label="Email">
-              <TextInput
-                type="email"
-                value={loginForm.email}
-                onChange={(event) => setLoginForm((current) => ({ ...current, email: event.target.value }))}
-                required
-              />
-            </Field>
-            <Field label="Password">
-              <TextInput
-                type="password"
-                value={loginForm.password}
-                onChange={(event) => setLoginForm((current) => ({ ...current, password: event.target.value }))}
-                required
-              />
-            </Field>
-            <PrimaryButton type="submit" className="w-full" disabled={loading.auth}>
-              {loading.auth ? <Loader2 className="animate-spin" size={16} /> : <CheckCircle2 size={16} />}
-              Sign in
-            </PrimaryButton>
-          </form>
-          <p className="mt-4 text-xs text-slate-500">
-            Default superadmin: admin@example.com / admin123
-          </p>
-        </section>
-      </div>
+      <LoginPage
+        loginForm={loginForm}
+        setLoginForm={setLoginForm}
+        loading={loading}
+        error={error}
+        handleLogin={handleLogin}
+      />
     );
   }
 
   return (
-    <div className="min-h-screen bg-[#f5f7fb]">
-      <header className="bg-white border-b border-slate-200">
-        <div className="mx-auto flex max-w-[1500px] flex-col gap-4 px-4 py-4 lg:flex-row lg:items-center lg:justify-between lg:px-6">
-          <div className="flex items-center gap-3">
-            <div className="flex items-center justify-center w-10 h-10 text-white rounded bg-slate-900">
-              <MessageSquare size={20} />
-            </div>
-            <div>
-              <h1 className="text-xl font-bold text-slate-950">RAG System Admin</h1>
-              <p className="text-sm text-slate-500">{api.baseUrl}</p>
-            </div>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="px-3 py-2 text-sm font-semibold rounded bg-slate-100 text-slate-700">
-              {currentUser.name} · {currentUser.role}
-            </span>
-            {health && (
-              <>
-                <StatusBadge status={health.mongodb} />
-                <StatusBadge status={health.ragService} />
-              </>
-            )}
-            <SecondaryButton onClick={loadHealth} disabled={loading.health}>
-              {loading.health ? <Loader2 className="animate-spin" size={16} /> : <Activity size={16} />}
-              Check
-            </SecondaryButton>
-            <SecondaryButton onClick={handleLogout}>Logout</SecondaryButton>
-          </div>
-        </div>
-      </header>
+    <AdminShell
+      currentUser={currentUser}
+      health={health}
+      loading={loading}
+      activeNavItems={activeNavItems}
+      activeSection={activeSection}
+      setActiveSection={setActiveSection}
+      isSuperAdmin={isSuperAdmin}
+      selectedCompany={selectedCompany}
+      backToSuperAdmin={backToSuperAdmin}
+      loadHealth={loadHealth}
+      handleLogout={handleLogout}
+    >
 
       {showCompanyModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center px-4 bg-slate-950/40">
@@ -1252,45 +1090,7 @@ ${widgetScriptSrc()}`;
         </div>
       )}
 
-      <main className="mx-auto grid max-w-[1500px] grid-cols-1 gap-4 px-4 py-4 lg:grid-cols-[320px_minmax(0,1fr)] lg:px-6">
-        <aside className="space-y-4">
-          <section className="p-2 bg-white border rounded border-slate-200">
-            <div className="px-2 py-2 text-xs font-semibold tracking-wide uppercase text-slate-500">
-              Navigation
-            </div>
-            <nav className="space-y-1">
-              {isSuperAdmin && selectedCompany && (
-                <button
-                  type="button"
-                  onClick={backToSuperAdmin}
-                  className="flex items-center w-full gap-3 px-3 py-3 mb-2 text-sm font-semibold text-left transition bg-white border rounded border-slate-200 text-slate-700 hover:bg-slate-50"
-                >
-                  <Building2 size={17} />
-                  Superadmin Home
-                </button>
-              )}
-              {activeNavItems.map((item) => {
-                const Icon = item.icon;
-                return (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => setActiveSection(item.id)}
-                    className={classNames(
-                      "flex w-full items-center gap-3 rounded px-3 py-3 text-left text-sm font-semibold transition",
-                      activeSection === item.id
-                        ? "bg-slate-900 text-white"
-                        : "text-slate-700 hover:bg-slate-100"
-                    )}
-                  >
-                    <Icon size={17} />
-                    {item.label}
-                  </button>
-                );
-              })}
-            </nav>
-          </section>
-
+      <div className="grid grid-cols-1 gap-5">
           {false && isSuperAdmin && !selectedCompany && activeSection === "companies" && (
           <section className="bg-white border rounded border-slate-200">
             <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200">
@@ -1386,9 +1186,7 @@ ${widgetScriptSrc()}`;
             </form>
           </section>
           )}
-        </aside>
-
-        <section className="space-y-4">
+        <section className="space-y-5">
           {(notice || error) && (
             <div
               className={classNames(
@@ -2300,19 +2098,47 @@ ${widgetScriptSrc()}`;
 
               {activeSection === "history" && (
               <section className="bg-white border rounded border-slate-200">
-                <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200">
+                <div className="flex flex-col gap-3 px-4 py-3 border-b border-slate-200 lg:flex-row lg:items-center lg:justify-between">
                   <div className="flex items-center gap-2">
                     <History size={18} />
                     <h2 className="font-semibold text-slate-950">Conversations</h2>
                   </div>
-                  <IconButton title="Refresh conversations" onClick={() => loadConversations()}>
-                    <RefreshCcw size={16} />
-                  </IconButton>
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                    <form className="flex min-w-0 gap-2" onSubmit={handleConversationSearch}>
+                      <div className="relative min-w-0 flex-1 sm:w-80">
+                        <Search
+                          className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+                          size={16}
+                        />
+                        <input
+                          className="h-9 w-full rounded border border-slate-200 bg-white pl-9 pr-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
+                          value={conversationSearch}
+                          onChange={(event) => setConversationSearch(event.target.value)}
+                          placeholder="Search email, phone, employee ID, session"
+                        />
+                      </div>
+                      <SecondaryButton type="submit" disabled={loading.conversations}>
+                        Search
+                      </SecondaryButton>
+                      {conversationSearch.trim() && (
+                        <SecondaryButton type="button" onClick={clearConversationSearch}>
+                          Clear
+                        </SecondaryButton>
+                      )}
+                    </form>
+                    <IconButton title="Refresh conversations" onClick={() => loadConversations()}>
+                      <RefreshCcw size={16} />
+                    </IconButton>
+                  </div>
                 </div>
                 <div className="grid gap-0 md:grid-cols-[340px_minmax(0,1fr)]">
                   <div className="max-h-[380px] overflow-y-auto border-b border-slate-200 p-2 md:border-b-0 md:border-r">
                     {conversations.length === 0 ? (
-                      <p className="p-4 text-sm text-slate-500">No conversations yet.</p>
+                      <p className="p-4 text-sm text-slate-500">
+                        {conversationSearch.trim()
+                          ? "No conversations match this search."
+                          : "No conversations yet."}
+                      </p>
                     ) : (
                       conversations.map((conversation) => (
                         <button
@@ -2327,9 +2153,15 @@ ${widgetScriptSrc()}`;
                           <Search className="shrink-0 text-slate-400" size={16} />
                           <span className="min-w-0">
                             <span className="block font-semibold truncate text-slate-800">
-                              {conversation.customerPhone || conversation.sessionId}
+                              {conversation.customerEmail ||
+                                conversation.customerPhone ||
+                                conversation.customerExternalId ||
+                                conversation.sessionId}
                             </span>
-                            <span className="block text-xs text-slate-500">{formatDate(conversation.updatedAt)}</span>
+                            <span className="block truncate text-xs text-slate-500">
+                              {conversation.customerAuthProvider || conversation.channel || "web"} ·{" "}
+                              {formatDate(conversation.updatedAt)}
+                            </span>
                           </span>
                         </button>
                       ))
@@ -2501,7 +2333,7 @@ npm.cmd run build:widget`}
             </>
           )}
         </section>
-      </main>
-    </div>
+      </div>
+    </AdminShell>
   );
 }
