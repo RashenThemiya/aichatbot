@@ -106,6 +106,24 @@ export const api = {
         method: "DELETE",
       }),
   },
+
+  smsIntegration: {
+    get: (companyId) => request(`/api/companies/${companyId}/sms-integration`),
+    save: (companyId, payload, hasExisting) =>
+      request(`/api/companies/${companyId}/sms-integration`, {
+        method: hasExisting ? "PUT" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      }),
+    validate: (companyId) =>
+      request(`/api/companies/${companyId}/sms-integration/validate`, {
+        method: "POST",
+      }),
+    remove: (companyId) =>
+      request(`/api/companies/${companyId}/sms-integration`, {
+        method: "DELETE",
+      }),
+  },
   documents: {
     list: (companyId) => request(`/api/companies/${companyId}/documents`),
     upload: (companyId, file) => {
