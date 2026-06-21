@@ -93,8 +93,14 @@ router.post("/", async (req, res) => {
       return res.status(401).json({ error: "Invalid widget API key" });
     }
 
-    const { message, sessionId, customerName, customerEmail, customerPhone } =
-      req.body;
+    const {
+      message,
+      sessionId,
+      customerName,
+      customerEmail,
+      customerPhone,
+      userToken,
+    } = req.body;
 
     if (!message || !message.trim()) {
       return res.status(400).json({ error: "Message is required" });
@@ -125,6 +131,12 @@ router.post("/", async (req, res) => {
 
     conversation.messages.push({ role: "user", content: message.trim() });
 
+    const userContext = {
+      sessionId: sid,
+      userIdentifier: customerEmail || customerName || customerPhone || "",
+      userToken: userToken || "",
+    };
+
     let liveResult = null;
     const liveTools = await LiveApiTool.find({
       companyId: company._id,
@@ -148,7 +160,7 @@ router.post("/", async (req, res) => {
           );
           if (selectedTool) {
             try {
-              liveResult = await executePlannedTool(selectedTool, toolPlan);
+              liveResult = await executePlannedTool(selectedTool, toolPlan, userContext);
             } catch (execErr) {
               liveResult = {
                 toolId: selectedTool._id.toString(),

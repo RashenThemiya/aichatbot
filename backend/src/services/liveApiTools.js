@@ -1,6 +1,7 @@
 const axios = require("axios");
 const config = require("../config");
 const { decryptSecret } = require("./crypto");
+const LiveApiCallLog = require("../models/LiveApiCallLog");
 
 function sanitizeToolsForPlanner(tools) {
   return tools
@@ -61,7 +62,7 @@ function assertRequiredParams(tool, plan) {
   }
 }
 
-function buildAuthHeaders(tool) {
+function buildServiceAuthHeaders(tool) {
   if (tool.authType === "none") return {};
   const secret = decryptSecret(tool.encryptedAuthSecret || "");
   if (!secret) {
@@ -81,6 +82,30 @@ function buildAuthHeaders(tool) {
   }
 
   return {};
+}
+
+function buildAuthHeaders(tool, userContext = {}) {
+  const { userToken } = userContext;
+
+  // replace mode: user's own token takes the place of the service credential
+  if (userToken && tool.userTokenMode === "replace") {
+    const prefix = tool.authValuePrefix || "";
+    return {
+      [tool.authHeaderName || "Authorization"]: `${prefix}${userToken}`.trim(),
+    };
+  }
+
+  const serviceHeaders = buildServiceAuthHeaders(tool);
+
+  // forward mode: send both the service credential and the user's token
+  if (userToken && tool.userTokenMode === "forward") {
+    return {
+      ...serviceHeaders,
+      [tool.userTokenHeader || "x-user-token"]: userToken,
+    };
+  }
+
+  return serviceHeaders;
 }
 
 function sanitizeResponse(data) {
@@ -117,7 +142,28 @@ function sanitizeResponse(data) {
   return output;
 }
 
-async function executePlannedTool(tool, plan) {
+async function logApiCall(tool, result, durationMs, userContext) {
+  try {
+    await LiveApiCallLog.create({
+      companyId: tool.companyId,
+      sessionId: userContext.sessionId || "",
+      toolId: tool._id,
+      toolName: tool.name,
+      method: tool.method,
+      url: result.url,
+      statusCode: result.status ?? null,
+      ok: Boolean(result.ok),
+      durationMs,
+      userIdentifier: userContext.userIdentifier || "",
+      hasUserToken: Boolean(userContext.userToken),
+      error: result.error || "",
+    });
+  } catch {
+    // logging must never crash the main flow
+  }
+}
+
+async function executePlannedTool(tool, plan, userContext = {}) {
   assertRequiredParams(tool, plan);
 
   const path = applyPathParams(tool.pathTemplate, plan.path_params || {});
@@ -128,20 +174,34 @@ async function executePlannedTool(tool, plan) {
   const body = mergeObject(tool.staticBody, plan.body_params || {});
   const headers = {
     ...mergeObject(tool.staticHeaders, plan.headers || {}),
-    ...buildAuthHeaders(tool),
+    ...buildAuthHeaders(tool, userContext),
   };
 
-  const response = await axios({
-    url,
-    method: tool.method,
-    params: query,
-    data: ["GET", "DELETE"].includes(tool.method) ? undefined : body,
-    headers,
-    timeout: Math.min(tool.timeoutMs || config.liveApiTimeoutMs, 30000),
-    validateStatus: () => true,
-  });
+  const start = Date.now();
+  let response;
+  try {
+    response = await axios({
+      url,
+      method: tool.method,
+      params: query,
+      data: ["GET", "DELETE"].includes(tool.method) ? undefined : body,
+      headers,
+      timeout: Math.min(tool.timeoutMs || config.liveApiTimeoutMs, 30000),
+      validateStatus: () => true,
+    });
+  } catch (axiosErr) {
+    const durationMs = Date.now() - start;
+    await logApiCall(
+      tool,
+      { url, status: null, ok: false, error: axiosErr.message },
+      durationMs,
+      userContext,
+    );
+    throw axiosErr;
+  }
 
-  return {
+  const durationMs = Date.now() - start;
+  const result = {
     toolId: tool._id.toString(),
     toolName: tool.name,
     method: tool.method,
@@ -150,6 +210,10 @@ async function executePlannedTool(tool, plan) {
     ok: response.status >= 200 && response.status < 300,
     response: sanitizeResponse(response.data),
   };
+
+  await logApiCall(tool, result, durationMs, userContext);
+
+  return result;
 }
 
 module.exports = {

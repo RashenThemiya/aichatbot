@@ -54,6 +54,12 @@ const liveApiToolSchema = new mongoose.Schema(
     authHeaderName: { type: String, default: "Authorization" },
     authValuePrefix: { type: String, default: "Bearer " },
     encryptedAuthSecret: { type: String, default: "" },
+    userTokenMode: {
+      type: String,
+      enum: ["none", "forward", "replace"],
+      default: "none",
+    },
+    userTokenHeader: { type: String, default: "x-user-token" },
     keywordHints: { type: [String], default: [] },
     isEnabled: { type: Boolean, default: true },
     timeoutMs: { type: Number, default: 10000 },

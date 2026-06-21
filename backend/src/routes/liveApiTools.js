@@ -1,6 +1,7 @@
 const express = require("express");
 
 const LiveApiTool = require("../models/LiveApiTool");
+const LiveApiCallLog = require("../models/LiveApiCallLog");
 const { canAccessCompany } = require("../middleware/auth");
 const { encryptSecret } = require("../services/crypto");
 
@@ -27,6 +28,8 @@ function toSafeTool(tool) {
     authHeaderName: tool.authHeaderName,
     authValuePrefix: tool.authValuePrefix,
     hasAuthSecret: Boolean(tool.encryptedAuthSecret),
+    userTokenMode: tool.userTokenMode,
+    userTokenHeader: tool.userTokenHeader,
     keywordHints: tool.keywordHints,
     isEnabled: tool.isEnabled,
     timeoutMs: tool.timeoutMs,
@@ -64,6 +67,8 @@ router.post("/", async (req, res) => {
       authHeaderName,
       authValuePrefix,
       authSecret,
+      userTokenMode,
+      userTokenHeader,
       keywordHints,
       isEnabled,
       timeoutMs,
@@ -90,6 +95,8 @@ router.post("/", async (req, res) => {
       authHeaderName: authHeaderName || "Authorization",
       authValuePrefix: authValuePrefix || "Bearer ",
       encryptedAuthSecret: authSecret ? encryptSecret(authSecret) : "",
+      userTokenMode: userTokenMode || "none",
+      userTokenHeader: userTokenHeader || "x-user-token",
       keywordHints: Array.isArray(keywordHints) ? keywordHints : [],
       isEnabled: isEnabled !== false,
       timeoutMs: Number(timeoutMs || 10000),
@@ -125,6 +132,8 @@ router.put("/:toolId", async (req, res) => {
       "authType",
       "authHeaderName",
       "authValuePrefix",
+      "userTokenMode",
+      "userTokenHeader",
       "keywordHints",
       "isEnabled",
       "timeoutMs",
@@ -164,6 +173,24 @@ router.delete("/:toolId", async (req, res) => {
     }
 
     res.json({ message: "Tool deleted", toolId: req.params.toolId });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get("/logs", async (req, res) => {
+  try {
+    const limit = Math.min(Number(req.query.limit) || 50, 200);
+    const skip = Number(req.query.skip) || 0;
+    const filter = { companyId: req.params.companyId };
+    if (req.query.sessionId) filter.sessionId = req.query.sessionId;
+    if (req.query.toolId) filter.toolId = req.query.toolId;
+
+    const logs = await LiveApiCallLog.find(filter)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit);
+    res.json(logs);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
