@@ -41,3 +41,32 @@ export const widgetEmbedModeOptions = [
     label: "Without Login Only",
   },
 ];
+
+export const defaultWidgetTheme = {
+  headerColor: "#000000",
+  sendButtonColor: "#000000",
+  launcherColor: "#000000",
+  launcherIcon: "bot",
+};
+
+export const widgetLauncherIconOptions = [
+  {
+    value: "bot",
+    label: "Chatbot Icon",
+  },
+  {
+    value: "message",
+    label: "Message Icon",
+  },
+  {
+    value: "question",
+    label: "Question Mark",
+  },
+];
+
+export function getCompanyWidgetTheme(company) {
+  return {
+    ...defaultWidgetTheme,
+    ...(company?.widgetTheme || {}),
+  };
+}

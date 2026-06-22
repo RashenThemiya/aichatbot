@@ -35,7 +35,11 @@ async function request(path, options = {}) {
 
   if (!response.ok) {
     const message = typeof data === "string" ? data : data.error || data.detail || "Request failed";
-    throw new Error(message);
+    const error = new Error(message);
+    error.status = response.status;
+    error.data = data;
+    error.path = path;
+    throw error;
   }
 
   return data;
@@ -83,6 +87,28 @@ export const api = {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       }),
+    updateWidgetTheme: async (id, payload) => {
+      const options = {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      };
+
+      try {
+        return await request(`/api/companies/${id}/widget-theme`, options);
+      } catch (err) {
+        const routeMissing =
+          err.status === 405 ||
+          (err.status === 404 && String(err.message || "").includes("Cannot PUT"));
+
+        if (!routeMissing) throw err;
+
+        return request(`/api/companies/${id}`, {
+          ...options,
+          body: JSON.stringify({ widgetTheme: payload }),
+        });
+      }
+    },
     generateWidgetApiKey: (id) =>
       request(`/api/companies/${id}/widget-api-key`, {
         method: "POST",

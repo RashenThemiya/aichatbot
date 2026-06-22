@@ -1,5 +1,6 @@
 import {
   Activity,
+  Bot,
   Building2,
   CheckCircle2,
   FileText,
@@ -35,6 +36,9 @@ import {
   emptySmsForm,
   emptyWhatsAppForm,
   widgetEmbedModeOptions,
+  defaultWidgetTheme,
+  widgetLauncherIconOptions,
+  getCompanyWidgetTheme,
 } from "./constants/forms";
 import { api, formatDate, getAuthToken, setAuthToken } from "./lib/api";
 import { classNames } from "./utils/classNames";
@@ -62,6 +66,7 @@ export default function App() {
   const [widgetKeyResult, setWidgetKeyResult] = useState(null);
   const [widgetApiKeyInput, setWidgetApiKeyInput] = useState("");
   const [widgetEmbedMode, setWidgetEmbedMode] = useState("all");
+  const [widgetThemeForm, setWidgetThemeForm] = useState(defaultWidgetTheme);
   const [showWidgetPreview, setShowWidgetPreview] = useState(false);
   const [widgetPreviewOpen, setWidgetPreviewOpen] = useState(false);
   const [widgetTestMessage, setWidgetTestMessage] = useState("");
@@ -293,10 +298,19 @@ export default function App() {
       setWidgetKeyResult(null);
       setWidgetApiKeyInput("");
       setWidgetEmbedMode("all");
+      setWidgetThemeForm(defaultWidgetTheme);
       setShowWidgetPreview(false);
       setWidgetPreviewOpen(false);
     }
   }, [selectedId]);
+
+  useEffect(() => {
+    if (selectedCompany) {
+      setWidgetThemeForm(getCompanyWidgetTheme(selectedCompany));
+    } else {
+      setWidgetThemeForm(defaultWidgetTheme);
+    }
+  }, [selectedCompany]);
 
   async function handleLogin(event) {
     event.preventDefault();
@@ -326,6 +340,7 @@ export default function App() {
     setWidgetKeyResult(null);
     setWidgetApiKeyInput("");
     setWidgetEmbedMode("all");
+    setWidgetThemeForm(defaultWidgetTheme);
     setShowWidgetPreview(false);
     setWidgetPreviewOpen(false);
     setWhatsappIntegration(null);
@@ -432,6 +447,7 @@ export default function App() {
     setWidgetKeyResult(null);
     setWidgetApiKeyInput("");
     setWidgetEmbedMode("all");
+    setWidgetThemeForm(defaultWidgetTheme);
     setShowWidgetPreview(false);
     setWidgetPreviewOpen(false);
     setWhatsappIntegration(null);
@@ -456,6 +472,84 @@ export default function App() {
     }
   }
 
+  async function handleSaveWidgetTheme() {
+    if (!selectedCompany) return;
+
+    const themeToSave = normalizeWidgetThemeForm(widgetThemeForm);
+    setWidgetThemeForm(themeToSave);
+
+    const result = await runTask(
+      "companies",
+      () => api.companies.updateWidgetTheme(selectedCompany._id, themeToSave)
+    );
+
+    if (result) {
+      const savedTheme = normalizeWidgetThemeForm(result.widgetTheme);
+      const themeWasSaved = widgetThemesMatch(savedTheme, themeToSave);
+      const companyWithSavedTheme = { ...result, widgetTheme: themeToSave };
+
+      setCompanies((current) =>
+        current.map((company) =>
+          company._id === selectedCompany._id
+            ? { ...company, ...companyWithSavedTheme }
+            : company
+        )
+      );
+      setWidgetThemeForm(themeToSave);
+
+      if (themeWasSaved) {
+        setNotice("Widget theme updated");
+      } else {
+        setError(
+          "The backend did not return the selected widget theme. Restart or redeploy the updated backend, then save again."
+        );
+      }
+    }
+  }
+
+  function handleResetWidgetTheme() {
+    setWidgetThemeForm({ ...defaultWidgetTheme });
+  }
+
+  function normalizeWidgetThemeForm(theme = {}) {
+    return {
+      headerColor: theme.headerColor || defaultWidgetTheme.headerColor,
+      sendButtonColor: theme.sendButtonColor || defaultWidgetTheme.sendButtonColor,
+      launcherColor: theme.launcherColor || defaultWidgetTheme.launcherColor,
+      launcherIcon: ["bot", "message", "question"].includes(theme.launcherIcon)
+        ? theme.launcherIcon
+        : defaultWidgetTheme.launcherIcon,
+    };
+  }
+
+  function widgetThemesMatch(left, right) {
+    const normalizedLeft = normalizeWidgetThemeForm(left);
+    const normalizedRight = normalizeWidgetThemeForm(right);
+
+    return (
+      normalizedLeft.headerColor.toLowerCase() === normalizedRight.headerColor.toLowerCase() &&
+      normalizedLeft.sendButtonColor.toLowerCase() === normalizedRight.sendButtonColor.toLowerCase() &&
+      normalizedLeft.launcherColor.toLowerCase() === normalizedRight.launcherColor.toLowerCase() &&
+      normalizedLeft.launcherIcon === normalizedRight.launcherIcon
+    );
+  }
+
+  function renderLauncherIcon(size = 22) {
+    if (widgetThemeForm.launcherIcon === "question") {
+      return (
+        <span className={classNames("font-bold leading-none", size >= 25 ? "text-2xl" : "text-lg")}>
+          ?
+        </span>
+      );
+    }
+
+    if (widgetThemeForm.launcherIcon === "bot") {
+      return <Bot size={size} />;
+    }
+
+    return <MessageSquare size={size} />;
+  }
+
   async function copyWidgetSnippet() {
     if (!selectedCompany) return;
     const snippet = widgetSnippet();
@@ -468,13 +562,19 @@ export default function App() {
 }
 
 function widgetBaseConfigLines(apiKey, companyName) {
+  const theme = widgetThemeForm || defaultWidgetTheme;
+
   return `    apiBaseUrl: ${jsString(api.baseUrl)},
     companyId: ${jsString(selectedCompany._id)},
     apiKey: ${jsString(apiKey)},
 
     title: ${jsString(`${companyName} Support`)},
     subtitle: "Ask us anything",
-    accentColor: "#111827",
+    accentColor: ${jsString(theme.headerColor)},
+    headerColor: ${jsString(theme.headerColor)},
+    sendButtonColor: ${jsString(theme.sendButtonColor)},
+    launcherColor: ${jsString(theme.launcherColor)},
+    launcherIcon: ${jsString(theme.launcherIcon)},
     position: "right",`;
 }
 
@@ -1024,7 +1124,7 @@ ${widgetScriptSrc()}`;
               </div>
               {widgetPreviewOpen && (
               <div className="absolute bottom-24 right-6 flex h-[560px] w-[380px] max-w-[calc(100%-48px)] flex-col overflow-hidden rounded border border-slate-200 bg-white shadow-2xl">
-                <div className="px-4 py-3 text-white bg-slate-900">
+                <div className="px-4 py-3 text-white" style={{ backgroundColor: widgetThemeForm.headerColor }}>
                   <div className="flex items-center justify-between gap-3">
                     <div>
                       <div className="text-sm font-bold">{selectedCompany.name} Support</div>
@@ -1046,9 +1146,14 @@ ${widgetScriptSrc()}`;
                       className={classNames(
                         "max-w-[86%] rounded px-3 py-2 text-sm leading-6",
                         message.role === "user"
-                          ? "ml-auto bg-slate-900 text-white"
+                          ? "ml-auto text-white"
                           : "border border-slate-200 bg-white text-slate-800"
                       )}
+                      style={
+                        message.role === "user"
+                          ? { backgroundColor: widgetThemeForm.sendButtonColor }
+                          : undefined
+                      }
                     >
                       <p className="whitespace-pre-wrap">{message.content}</p>
                       {message.sources?.length > 0 && (
@@ -1068,7 +1173,8 @@ ${widgetScriptSrc()}`;
                   />
                   <button
                     type="submit"
-                    className="px-4 text-sm font-semibold text-white rounded bg-slate-900"
+                    className="px-4 text-sm font-semibold text-white rounded"
+                    style={{ backgroundColor: widgetThemeForm.sendButtonColor }}
                     disabled={loading.widgetTest}
                   >
                     {loading.widgetTest ? "..." : "Send"}
@@ -1079,11 +1185,12 @@ ${widgetScriptSrc()}`;
               <button
                 type="button"
                 onClick={() => setWidgetPreviewOpen((value) => !value)}
-                className="absolute flex items-center justify-center w-16 h-16 text-white transition rounded-full shadow-2xl bottom-6 right-6 bg-slate-900 hover:bg-slate-800"
+                className="absolute flex items-center justify-center w-16 h-16 text-white transition rounded-full shadow-2xl bottom-6 right-6"
+                style={{ backgroundColor: widgetThemeForm.launcherColor }}
                 title="Open chat"
                 aria-label="Open chat"
               >
-                <MessageSquare size={25} />
+                {renderLauncherIcon(25)}
               </button>
             </div>
           </section>
@@ -1415,6 +1522,110 @@ ${widgetScriptSrc()}`;
   <p className="mt-1 text-xs text-slate-500">
     Select the login method needed by the company website before copying the embed code.
   </p>
+</div>
+
+<div className="pt-4 mt-4 border-t border-slate-200">
+  <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+    <div>
+      <div className="text-sm font-semibold text-slate-900">Widget Theme</div>
+      <p className="mt-1 text-xs text-slate-500">
+        Choose colors for the widget header, send button, and floating launcher.
+      </p>
+    </div>
+
+    <div className="flex flex-wrap gap-2">
+      <SecondaryButton onClick={handleSaveWidgetTheme} disabled={loading.companies}>
+        {loading.companies ? (
+          <Loader2 className="animate-spin" size={16} />
+        ) : (
+          <CheckCircle2 size={16} />
+        )}
+        Save Theme
+      </SecondaryButton>
+
+      <SecondaryButton onClick={handleResetWidgetTheme}>
+        Reset
+      </SecondaryButton>
+    </div>
+  </div>
+
+  <div className="grid gap-3 mt-3 md:grid-cols-3">
+    <Field label="Header color">
+      <input
+        type="color"
+        className="w-full h-10 p-1 bg-white border rounded border-slate-200"
+        value={widgetThemeForm.headerColor}
+        onChange={(event) =>
+          setWidgetThemeForm((current) => ({
+            ...current,
+            headerColor: event.target.value,
+          }))
+        }
+      />
+    </Field>
+
+    <Field label="Send button color">
+      <input
+        type="color"
+        className="w-full h-10 p-1 bg-white border rounded border-slate-200"
+        value={widgetThemeForm.sendButtonColor}
+        onChange={(event) =>
+          setWidgetThemeForm((current) => ({
+            ...current,
+            sendButtonColor: event.target.value,
+          }))
+        }
+      />
+    </Field>
+
+    <Field label="Launcher color">
+      <input
+        type="color"
+        className="w-full h-10 p-1 bg-white border rounded border-slate-200"
+        value={widgetThemeForm.launcherColor}
+        onChange={(event) =>
+          setWidgetThemeForm((current) => ({
+            ...current,
+            launcherColor: event.target.value,
+          }))
+        }
+      />
+    </Field>
+  </div>
+
+  <div className="grid gap-3 mt-3 md:grid-cols-[minmax(0,1fr)_220px]">
+    <Field label="Launcher icon">
+      <select
+        className="w-full h-10 px-3 text-sm transition bg-white border rounded outline-none border-slate-200 text-slate-900 focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
+        value={widgetThemeForm.launcherIcon}
+        onChange={(event) =>
+          setWidgetThemeForm((current) => ({
+            ...current,
+            launcherIcon: event.target.value,
+          }))
+        }
+      >
+        {widgetLauncherIconOptions.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    </Field>
+
+    <div>
+      <span className="block mb-1 text-xs font-semibold tracking-wide uppercase text-slate-500">
+        Launcher preview
+      </span>
+
+      <div
+        className="flex items-center justify-center w-12 h-12 text-white rounded-full shadow"
+        style={{ backgroundColor: widgetThemeForm.launcherColor }}
+      >
+        {renderLauncherIcon(22)}
+      </div>
+    </div>
+  </div>
 </div>
 
                       </div>
@@ -2303,7 +2514,7 @@ npm.cmd run build:widget`}
                             <p className="mt-1 text-sm text-slate-500">Customer website page</p>
                           </div>
                           <div className="absolute bottom-20 right-4 flex h-[220px] w-[250px] flex-col overflow-hidden rounded border border-slate-200 bg-white shadow-xl">
-                            <div className="px-3 py-2 text-white bg-slate-900">
+                            <div className="px-3 py-2 text-white" style={{ backgroundColor: widgetThemeForm.headerColor }}>
                               <div className="text-xs font-bold">{selectedCompany.name} Support</div>
                               <div className="text-[11px] text-slate-300">Chat widget panel</div>
                             </div>
@@ -2311,7 +2522,7 @@ npm.cmd run build:widget`}
                               <div className="max-w-[85%] rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700">
                                 Hi, how can I help?
                               </div>
-                              <div className="ml-auto max-w-[85%] rounded bg-slate-900 px-2 py-1 text-xs text-white">
+                              <div className="ml-auto max-w-[85%] rounded px-2 py-1 text-xs text-white" style={{ backgroundColor: widgetThemeForm.sendButtonColor }}>
                                 Ask a question
                               </div>
                             </div>
@@ -2321,8 +2532,8 @@ npm.cmd run build:widget`}
                               </div>
                             </div>
                           </div>
-                          <div className="absolute flex items-center justify-center text-white rounded-full shadow-xl bottom-4 right-4 h-14 w-14 bg-slate-900">
-                            <MessageSquare size={22} />
+                          <div className="absolute flex items-center justify-center text-white rounded-full shadow-xl bottom-4 right-4 h-14 w-14" style={{ backgroundColor: widgetThemeForm.launcherColor }}>
+                            {renderLauncherIcon(22)}
                           </div>
                         </div>
                       </div>
