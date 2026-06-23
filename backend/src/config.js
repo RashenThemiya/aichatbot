@@ -1,5 +1,12 @@
 require("dotenv").config();
 
+function parseCsvEnv(value) {
+  return String(value || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
 module.exports = {
   port: process.env.PORT || 3000,
   mongodbUri:
@@ -12,6 +19,19 @@ module.exports = {
   liveApiSecretKey: process.env.LIVE_API_SECRET_KEY || "",
   liveApiTimeoutMs: Number(process.env.LIVE_API_TIMEOUT_MS || 10000),
   liveApiMinPlanConfidence: Number(
-    process.env.LIVE_API_MIN_PLAN_CONFIDENCE || 0.55,
+    process.env.LIVE_API_MIN_PLAN_CONFIDENCE || 0.55
+  ),
+  graphApiVersion: process.env.GRAPH_API_VERSION || "v20.0",
+  whatsappVerifyToken: process.env.WHATSAPP_VERIFY_TOKEN,
+  whatsappTokenEncryptionKey: process.env.WHATSAPP_TOKEN_ENCRYPTION_KEY,
+  smsTokenEncryptionKey:
+    process.env.SMS_TOKEN_ENCRYPTION_KEY || process.env.WHATSAPP_TOKEN_ENCRYPTION_KEY,
+  twilioValidateWebhookSignature:
+    process.env.TWILIO_VALIDATE_WEBHOOK_SIGNATURE !== "false",
+  publicBackendUrl: process.env.PUBLIC_BACKEND_URL || "",
+  openaiApiKey: process.env.OPENAI_API_KEY,
+  openaiChatModel: process.env.OPENAI_CHAT_MODEL || "gpt-4o-mini",
+  googleClientIds: parseCsvEnv(
+    process.env.GOOGLE_CLIENT_IDS || process.env.GOOGLE_CLIENT_ID
   ),
 };

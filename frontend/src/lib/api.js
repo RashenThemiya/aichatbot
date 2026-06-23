@@ -1,5 +1,4 @@
-const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL || "http://localhost:3000";
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "https://botbackend.pentarixlabs.com";
 
 let authToken = localStorage.getItem("rag_admin_token") || "";
 
@@ -38,11 +37,12 @@ async function request(path, options = {}) {
   });
 
   if (!response.ok) {
-    const message =
-      typeof data === "string"
-        ? data
-        : data.error || data.detail || "Request failed";
-    throw new Error(message);
+    const message = typeof data === "string" ? data : data.error || data.detail || "Request failed";
+    const error = new Error(message);
+    error.status = response.status;
+    error.data = data;
+    error.path = path;
+    throw error;
   }
 
   return data;
@@ -90,11 +90,68 @@ export const api = {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       }),
+    updateWidgetTheme: async (id, payload) => {
+      const options = {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      };
+
+      try {
+        return await request(`/api/companies/${id}/widget-theme`, options);
+      } catch (err) {
+        const routeMissing =
+          err.status === 405 ||
+          (err.status === 404 && String(err.message || "").includes("Cannot PUT"));
+
+        if (!routeMissing) throw err;
+
+        return request(`/api/companies/${id}`, {
+          ...options,
+          body: JSON.stringify({ widgetTheme: payload }),
+        });
+      }
+    },
     generateWidgetApiKey: (id) =>
       request(`/api/companies/${id}/widget-api-key`, {
         method: "POST",
       }),
     remove: (id) => request(`/api/companies/${id}`, { method: "DELETE" }),
+  },
+  whatsappIntegration: {
+    get: (companyId) => request(`/api/companies/${companyId}/whatsapp-integration`),
+    save: (companyId, payload, hasExisting) =>
+      request(`/api/companies/${companyId}/whatsapp-integration`, {
+        method: hasExisting ? "PUT" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      }),
+    validate: (companyId) =>
+      request(`/api/companies/${companyId}/whatsapp-integration/validate`, {
+        method: "POST",
+      }),
+    remove: (companyId) =>
+      request(`/api/companies/${companyId}/whatsapp-integration`, {
+        method: "DELETE",
+      }),
+  },
+
+  smsIntegration: {
+    get: (companyId) => request(`/api/companies/${companyId}/sms-integration`),
+    save: (companyId, payload, hasExisting) =>
+      request(`/api/companies/${companyId}/sms-integration`, {
+        method: hasExisting ? "PUT" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      }),
+    validate: (companyId) =>
+      request(`/api/companies/${companyId}/sms-integration/validate`, {
+        method: "POST",
+      }),
+    remove: (companyId) =>
+      request(`/api/companies/${companyId}/sms-integration`, {
+        method: "DELETE",
+      }),
   },
   documents: {
     list: (companyId) => request(`/api/companies/${companyId}/documents`),
@@ -142,8 +199,10 @@ export const api = {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       }),
-    conversations: (companyId) =>
-      request(`/api/companies/${companyId}/chat/conversations`),
+    conversations: (companyId, search = "") => {
+      const query = search ? `?search=${encodeURIComponent(search)}` : "";
+      return request(`/api/companies/${companyId}/chat/conversations${query}`);
+    },
     history: (companyId, sessionId) =>
       request(`/api/companies/${companyId}/chat/history/${sessionId}`),
   },
