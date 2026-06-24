@@ -135,6 +135,10 @@ function mapSources(ragSources = []) {
   }));
 }
 
+function escapeRegex(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 async function mergeGuestConversation({
   companyId,
   guestSessionId,
@@ -142,6 +146,8 @@ async function mergeGuestConversation({
   customerName,
   customerEmail,
   customerPhone,
+  customerExternalId,
+  customerAuthProvider,
 }) {
   if (!isValidGuestSessionId(guestSessionId)) return;
 
@@ -164,6 +170,10 @@ async function mergeGuestConversation({
     guestConversation.customerName = customerName || guestConversation.customerName || "";
     guestConversation.customerEmail = customerEmail || guestConversation.customerEmail || "";
     guestConversation.customerPhone = customerPhone || guestConversation.customerPhone || "";
+    guestConversation.customerExternalId =
+      customerExternalId || guestConversation.customerExternalId || "";
+    guestConversation.customerAuthProvider =
+      customerAuthProvider || guestConversation.customerAuthProvider || "";
     guestConversation.channel = "web";
 
     await guestConversation.save();
@@ -173,6 +183,10 @@ async function mergeGuestConversation({
   targetConversation.customerName = customerName || targetConversation.customerName || "";
   targetConversation.customerEmail = customerEmail || targetConversation.customerEmail || "";
   targetConversation.customerPhone = customerPhone || targetConversation.customerPhone || "";
+  targetConversation.customerExternalId =
+    customerExternalId || targetConversation.customerExternalId || "";
+  targetConversation.customerAuthProvider =
+    customerAuthProvider || targetConversation.customerAuthProvider || "";
 
   if (guestConversation.messages?.length) {
     targetConversation.messages.push(...guestConversation.messages);
@@ -203,6 +217,8 @@ router.post("/auth/google", async (req, res) => {
       targetSessionId: sessionId,
       customerName: googleUser.name,
       customerEmail: googleUser.email,
+      customerExternalId: googleUser.googleSub,
+      customerAuthProvider: "google",
     });
 
     res.json({
@@ -243,6 +259,8 @@ router.post("/auth/external", async (req, res) => {
       customerName: externalUser.name,
       customerEmail: externalUser.email,
       customerPhone: externalUser.phone,
+      customerExternalId: externalUser.externalUserId,
+      customerAuthProvider: "external",
     });
 
     res.json({
@@ -271,6 +289,8 @@ router.post("/", async (req, res) => {
       customerName,
       customerEmail,
       customerPhone,
+      customerExternalId,
+      customerAuthProvider,
     } = req.body;
 
     if (!message || !message.trim()) {
@@ -291,6 +311,8 @@ router.post("/", async (req, res) => {
         customerName: customerName || "",
         customerEmail: customerEmail || "",
         customerPhone: customerPhone || "",
+        customerExternalId: customerExternalId || "",
+        customerAuthProvider: customerAuthProvider || (sid.startsWith("web_guest_") ? "guest" : ""),
         channel: "web",
         messages: [],
       });
@@ -298,6 +320,8 @@ router.post("/", async (req, res) => {
       if (customerName) conversation.customerName = customerName;
       if (customerEmail) conversation.customerEmail = customerEmail;
       if (customerPhone) conversation.customerPhone = customerPhone;
+      if (customerExternalId) conversation.customerExternalId = customerExternalId;
+      if (customerAuthProvider) conversation.customerAuthProvider = customerAuthProvider;
     }
 
     const originalMessage = message.trim();
@@ -386,9 +410,25 @@ router.get("/history/:sessionId", async (req, res) => {
 
 router.get("/conversations", async (req, res) => {
   try {
-    const conversations = await Conversation.find({
+    const filter = {
       companyId: req.params.companyId,
-    })
+    };
+
+    const search = String(req.query.search || "").trim();
+    if (search) {
+      const regex = new RegExp(escapeRegex(search), "i");
+      filter.$or = [
+        { sessionId: regex },
+        { customerName: regex },
+        { customerEmail: regex },
+        { customerPhone: regex },
+        { customerExternalId: regex },
+        { customerAuthProvider: regex },
+        { channel: regex },
+      ];
+    }
+
+    const conversations = await Conversation.find(filter)
       .sort({ updatedAt: -1 })
       .select("-messages");
 

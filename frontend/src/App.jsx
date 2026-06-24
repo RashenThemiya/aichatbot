@@ -1,6 +1,6 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
 import {
   Activity,
+  Bot,
   Building2,
   CheckCircle2,
   FileText,
@@ -17,152 +17,31 @@ import {
   Users,
   XCircle,
 } from "lucide-react";
-import { api, formatDate } from "./lib/api";
-import { getAuthToken, setAuthToken } from "./lib/api";
-
-const emptyCompanyForm = { name: "", slug: "", description: "" };
-const emptyWhatsAppForm = {
-  phoneNumberId: "",
-  accessToken: "",
-  isActive: true,
-};
-const emptySmsForm = {
-  accountSid: "",
-  authToken: "",
-  phoneNumber: "",
-  isActive: true,
-};
-
-const widgetEmbedModeOptions = [
-  {
-    value: "all",
-    label: "All Login Options",
-  },
-  {
-    value: "external",
-    label: "Company Account Login Only",
-  },
-  {
-    value: "google",
-    label: "Google Auth Login Only",
-  },
-  {
-    value: "guest",
-    label: "Without Login Only",
-  },
-];
-
-const emptyLoginForm = { email: "admin@example.com", password: "admin123" };
-const emptyAdminForm = {
-  name: "",
-  email: "",
-  password: "",
-  role: "company_admin",
-  companyId: "",
-};
-
-function classNames(...values) {
-  return values.filter(Boolean).join(" ");
-}
-
-function StatusBadge({ status }) {
-  const styles = {
-    indexed: "bg-emerald-50 text-emerald-700 ring-emerald-200",
-    indexing: "bg-amber-50 text-amber-700 ring-amber-200",
-    failed: "bg-rose-50 text-rose-700 ring-rose-200",
-    ok: "bg-emerald-50 text-emerald-700 ring-emerald-200",
-    connected: "bg-emerald-50 text-emerald-700 ring-emerald-200",
-    unavailable: "bg-rose-50 text-rose-700 ring-rose-200",
-    disconnected: "bg-rose-50 text-rose-700 ring-rose-200",
-  };
-
-  return (
-    <span
-      className={classNames(
-        "inline-flex items-center rounded px-2 py-1 text-xs font-semibold ring-1",
-        styles[status] || "bg-slate-50 text-slate-700 ring-slate-200"
-      )}
-    >
-      {status || "-"}
-    </span>
-  );
-}
-
-function IconButton({ title, children, className = "", ...props }) {
-  return (
-    <button
-      type="button"
-      title={title}
-      aria-label={title}
-      className={classNames(
-        "inline-flex h-9 w-9 items-center justify-center rounded border border-slate-200 bg-white text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50",
-        className
-      )}
-      {...props}
-    >
-      {children}
-    </button>
-  );
-}
-
-function PrimaryButton({ children, className = "", ...props }) {
-  return (
-    <button
-      type="button"
-      className={classNames(
-        "inline-flex h-10 items-center justify-center gap-2 rounded bg-slate-900 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800",
-        className
-      )}
-      {...props}
-    >
-      {children}
-    </button>
-  );
-}
-
-function SecondaryButton({ children, className = "", ...props }) {
-  return (
-    <button
-      type="button"
-      className={classNames(
-        "inline-flex h-10 items-center justify-center gap-2 rounded border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50",
-        className
-      )}
-      {...props}
-    >
-      {children}
-    </button>
-  );
-}
-
-function Field({ label, children }) {
-  return (
-    <label className="block">
-      <span className="block mb-1 text-xs font-semibold tracking-wide uppercase text-slate-500">
-        {label}
-      </span>
-      {children}
-    </label>
-  );
-}
-
-function TextInput(props) {
-  return (
-    <input
-      className="w-full h-10 px-3 text-sm transition bg-white border rounded outline-none border-slate-200 text-slate-900 placeholder:text-slate-400 focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
-      {...props}
-    />
-  );
-}
-
-function TextArea(props) {
-  return (
-    <textarea
-      className="w-full px-3 py-2 text-sm transition bg-white border rounded outline-none resize-y min-h-24 border-slate-200 text-slate-900 placeholder:text-slate-400 focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
-      {...props}
-    />
-  );
-}
+import { Fragment, useEffect, useMemo, useState } from "react";
+import { AdminShell } from "./components/AdminShell";
+import { LoginPage } from "./components/LoginPage";
+import {
+  Field,
+  IconButton,
+  PrimaryButton,
+  SecondaryButton,
+  StatusBadge,
+  TextArea,
+  TextInput,
+} from "./components/ui";
+import {
+  emptyAdminForm,
+  emptyCompanyForm,
+  emptyLoginForm,
+  emptySmsForm,
+  emptyWhatsAppForm,
+  widgetEmbedModeOptions,
+  defaultWidgetTheme,
+  widgetLauncherIconOptions,
+  getCompanyWidgetTheme,
+} from "./constants/forms";
+import { api, formatDate, getAuthToken, setAuthToken } from "./lib/api";
+import { classNames } from "./utils/classNames";
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState(null);
@@ -176,6 +55,7 @@ export default function App() {
   const [selectedId, setSelectedId] = useState("");
   const [documents, setDocuments] = useState([]);
   const [conversations, setConversations] = useState([]);
+  const [conversationSearch, setConversationSearch] = useState("");
   const [selectedConversation, setSelectedConversation] = useState(null);
   const [companyForm, setCompanyForm] = useState(emptyCompanyForm);
   const [showCompanyModal, setShowCompanyModal] = useState(false);
@@ -186,6 +66,7 @@ export default function App() {
   const [widgetKeyResult, setWidgetKeyResult] = useState(null);
   const [widgetApiKeyInput, setWidgetApiKeyInput] = useState("");
   const [widgetEmbedMode, setWidgetEmbedMode] = useState("all");
+  const [widgetThemeForm, setWidgetThemeForm] = useState(defaultWidgetTheme);
   const [showWidgetPreview, setShowWidgetPreview] = useState(false);
   const [widgetPreviewOpen, setWidgetPreviewOpen] = useState(false);
   const [widgetTestMessage, setWidgetTestMessage] = useState("");
@@ -303,12 +184,12 @@ export default function App() {
     if (result) setDocuments(result);
   }
 
-  async function loadConversations(companyId = selectedId) {
+  async function loadConversations(companyId = selectedId, search = conversationSearch) {
     if (!companyId) {
       setConversations([]);
       return;
     }
-    const result = await runTask("conversations", () => api.chat.conversations(companyId));
+    const result = await runTask("conversations", () => api.chat.conversations(companyId, search));
     if (result) setConversations(result);
   }
 
@@ -412,14 +293,24 @@ export default function App() {
       loadWhatsAppIntegration(selectedId);
       loadSmsIntegration(selectedId);
       setSelectedConversation(null);
+      setConversationSearch("");
       setChatResult(null);
       setWidgetKeyResult(null);
       setWidgetApiKeyInput("");
       setWidgetEmbedMode("all");
+      setWidgetThemeForm(defaultWidgetTheme);
       setShowWidgetPreview(false);
       setWidgetPreviewOpen(false);
     }
   }, [selectedId]);
+
+  useEffect(() => {
+    if (selectedCompany) {
+      setWidgetThemeForm(getCompanyWidgetTheme(selectedCompany));
+    } else {
+      setWidgetThemeForm(defaultWidgetTheme);
+    }
+  }, [selectedCompany]);
 
   async function handleLogin(event) {
     event.preventDefault();
@@ -449,6 +340,7 @@ export default function App() {
     setWidgetKeyResult(null);
     setWidgetApiKeyInput("");
     setWidgetEmbedMode("all");
+    setWidgetThemeForm(defaultWidgetTheme);
     setShowWidgetPreview(false);
     setWidgetPreviewOpen(false);
     setWhatsappIntegration(null);
@@ -555,6 +447,7 @@ export default function App() {
     setWidgetKeyResult(null);
     setWidgetApiKeyInput("");
     setWidgetEmbedMode("all");
+    setWidgetThemeForm(defaultWidgetTheme);
     setShowWidgetPreview(false);
     setWidgetPreviewOpen(false);
     setWhatsappIntegration(null);
@@ -579,6 +472,84 @@ export default function App() {
     }
   }
 
+  async function handleSaveWidgetTheme() {
+    if (!selectedCompany) return;
+
+    const themeToSave = normalizeWidgetThemeForm(widgetThemeForm);
+    setWidgetThemeForm(themeToSave);
+
+    const result = await runTask(
+      "companies",
+      () => api.companies.updateWidgetTheme(selectedCompany._id, themeToSave)
+    );
+
+    if (result) {
+      const savedTheme = normalizeWidgetThemeForm(result.widgetTheme);
+      const themeWasSaved = widgetThemesMatch(savedTheme, themeToSave);
+      const companyWithSavedTheme = { ...result, widgetTheme: themeToSave };
+
+      setCompanies((current) =>
+        current.map((company) =>
+          company._id === selectedCompany._id
+            ? { ...company, ...companyWithSavedTheme }
+            : company
+        )
+      );
+      setWidgetThemeForm(themeToSave);
+
+      if (themeWasSaved) {
+        setNotice("Widget theme updated");
+      } else {
+        setError(
+          "The backend did not return the selected widget theme. Restart or redeploy the updated backend, then save again."
+        );
+      }
+    }
+  }
+
+  function handleResetWidgetTheme() {
+    setWidgetThemeForm({ ...defaultWidgetTheme });
+  }
+
+  function normalizeWidgetThemeForm(theme = {}) {
+    return {
+      headerColor: theme.headerColor || defaultWidgetTheme.headerColor,
+      sendButtonColor: theme.sendButtonColor || defaultWidgetTheme.sendButtonColor,
+      launcherColor: theme.launcherColor || defaultWidgetTheme.launcherColor,
+      launcherIcon: ["bot", "message", "question"].includes(theme.launcherIcon)
+        ? theme.launcherIcon
+        : defaultWidgetTheme.launcherIcon,
+    };
+  }
+
+  function widgetThemesMatch(left, right) {
+    const normalizedLeft = normalizeWidgetThemeForm(left);
+    const normalizedRight = normalizeWidgetThemeForm(right);
+
+    return (
+      normalizedLeft.headerColor.toLowerCase() === normalizedRight.headerColor.toLowerCase() &&
+      normalizedLeft.sendButtonColor.toLowerCase() === normalizedRight.sendButtonColor.toLowerCase() &&
+      normalizedLeft.launcherColor.toLowerCase() === normalizedRight.launcherColor.toLowerCase() &&
+      normalizedLeft.launcherIcon === normalizedRight.launcherIcon
+    );
+  }
+
+  function renderLauncherIcon(size = 22) {
+    if (widgetThemeForm.launcherIcon === "question") {
+      return (
+        <span className={classNames("font-bold leading-none", size >= 25 ? "text-2xl" : "text-lg")}>
+          ?
+        </span>
+      );
+    }
+
+    if (widgetThemeForm.launcherIcon === "bot") {
+      return <Bot size={size} />;
+    }
+
+    return <MessageSquare size={size} />;
+  }
+
   async function copyWidgetSnippet() {
     if (!selectedCompany) return;
     const snippet = widgetSnippet();
@@ -591,18 +562,24 @@ export default function App() {
 }
 
 function widgetBaseConfigLines(apiKey, companyName) {
+  const theme = widgetThemeForm || defaultWidgetTheme;
+
   return `    apiBaseUrl: ${jsString(api.baseUrl)},
     companyId: ${jsString(selectedCompany._id)},
     apiKey: ${jsString(apiKey)},
 
     title: ${jsString(`${companyName} Support`)},
     subtitle: "Ask us anything",
-    accentColor: "#111827",
+    accentColor: ${jsString(theme.headerColor)},
+    headerColor: ${jsString(theme.headerColor)},
+    sendButtonColor: ${jsString(theme.sendButtonColor)},
+    launcherColor: ${jsString(theme.launcherColor)},
+    launcherIcon: ${jsString(theme.launcherIcon)},
     position: "right",`;
 }
 
 function widgetScriptSrc() {
-  return `<script src="http://localhost:5173/dist-widget/rag-chat-widget.iife.js"></script>`;
+  return `<script src="https://aichatbot.pentarixlabs.com/dist-widget/rag-chat-widget.iife.js"></script>`;
 }
 
 function widgetSnippet() {
@@ -969,6 +946,18 @@ ${widgetScriptSrc()}`;
     }
   }
 
+  async function handleConversationSearch(event) {
+    event.preventDefault();
+    setSelectedConversation(null);
+    await loadConversations(selectedId, conversationSearch.trim());
+  }
+
+  async function clearConversationSearch() {
+    setConversationSearch("");
+    setSelectedConversation(null);
+    await loadConversations(selectedId, "");
+  }
+
   async function handleOpenConversation(sessionId) {
     if (!selectedCompany) return;
     const result = await runTask("conversations", () =>
@@ -1020,81 +1009,30 @@ ${widgetScriptSrc()}`;
 
   if (!currentUser) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[#f5f7fb] px-4">
-        <section className="w-full max-w-md p-6 bg-white border rounded shadow-sm border-slate-200">
-          <div className="mb-6">
-            <div className="flex items-center justify-center mb-3 text-white rounded h-11 w-11 bg-slate-900">
-              <MessageSquare size={21} />
-            </div>
-            <h1 className="text-2xl font-bold text-slate-950">Admin Login</h1>
-            <p className="mt-1 text-sm text-slate-500">{api.baseUrl}</p>
-          </div>
-          {error && (
-            <div className="px-3 py-2 mb-4 text-sm border rounded border-rose-200 bg-rose-50 text-rose-700">
-              {error}
-            </div>
-          )}
-          <form className="space-y-4" onSubmit={handleLogin}>
-            <Field label="Email">
-              <TextInput
-                type="email"
-                value={loginForm.email}
-                onChange={(event) => setLoginForm((current) => ({ ...current, email: event.target.value }))}
-                required
-              />
-            </Field>
-            <Field label="Password">
-              <TextInput
-                type="password"
-                value={loginForm.password}
-                onChange={(event) => setLoginForm((current) => ({ ...current, password: event.target.value }))}
-                required
-              />
-            </Field>
-            <PrimaryButton type="submit" className="w-full" disabled={loading.auth}>
-              {loading.auth ? <Loader2 className="animate-spin" size={16} /> : <CheckCircle2 size={16} />}
-              Sign in
-            </PrimaryButton>
-          </form>
-          <p className="mt-4 text-xs text-slate-500">
-            Default superadmin: admin@example.com / admin123
-          </p>
-        </section>
-      </div>
+      <LoginPage
+        loginForm={loginForm}
+        setLoginForm={setLoginForm}
+        loading={loading}
+        error={error}
+        handleLogin={handleLogin}
+      />
     );
   }
 
   return (
-    <div className="min-h-screen bg-[#f5f7fb]">
-      <header className="bg-white border-b border-slate-200">
-        <div className="mx-auto flex max-w-[1500px] flex-col gap-4 px-4 py-4 lg:flex-row lg:items-center lg:justify-between lg:px-6">
-          <div className="flex items-center gap-3">
-            <div className="flex items-center justify-center w-10 h-10 text-white rounded bg-slate-900">
-              <MessageSquare size={20} />
-            </div>
-            <div>
-              <h1 className="text-xl font-bold text-slate-950">RAG System Admin</h1>
-              <p className="text-sm text-slate-500">{api.baseUrl}</p>
-            </div>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="px-3 py-2 text-sm font-semibold rounded bg-slate-100 text-slate-700">
-              {currentUser.name} · {currentUser.role}
-            </span>
-            {health && (
-              <>
-                <StatusBadge status={health.mongodb} />
-                <StatusBadge status={health.ragService} />
-              </>
-            )}
-            <SecondaryButton onClick={loadHealth} disabled={loading.health}>
-              {loading.health ? <Loader2 className="animate-spin" size={16} /> : <Activity size={16} />}
-              Check
-            </SecondaryButton>
-            <SecondaryButton onClick={handleLogout}>Logout</SecondaryButton>
-          </div>
-        </div>
-      </header>
+    <AdminShell
+      currentUser={currentUser}
+      health={health}
+      loading={loading}
+      activeNavItems={activeNavItems}
+      activeSection={activeSection}
+      setActiveSection={setActiveSection}
+      isSuperAdmin={isSuperAdmin}
+      selectedCompany={selectedCompany}
+      backToSuperAdmin={backToSuperAdmin}
+      loadHealth={loadHealth}
+      handleLogout={handleLogout}
+    >
 
       {showCompanyModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center px-4 bg-slate-950/40">
@@ -1186,7 +1124,7 @@ ${widgetScriptSrc()}`;
               </div>
               {widgetPreviewOpen && (
               <div className="absolute bottom-24 right-6 flex h-[560px] w-[380px] max-w-[calc(100%-48px)] flex-col overflow-hidden rounded border border-slate-200 bg-white shadow-2xl">
-                <div className="px-4 py-3 text-white bg-slate-900">
+                <div className="px-4 py-3 text-white" style={{ backgroundColor: widgetThemeForm.headerColor }}>
                   <div className="flex items-center justify-between gap-3">
                     <div>
                       <div className="text-sm font-bold">{selectedCompany.name} Support</div>
@@ -1208,9 +1146,14 @@ ${widgetScriptSrc()}`;
                       className={classNames(
                         "max-w-[86%] rounded px-3 py-2 text-sm leading-6",
                         message.role === "user"
-                          ? "ml-auto bg-slate-900 text-white"
+                          ? "ml-auto text-white"
                           : "border border-slate-200 bg-white text-slate-800"
                       )}
+                      style={
+                        message.role === "user"
+                          ? { backgroundColor: widgetThemeForm.sendButtonColor }
+                          : undefined
+                      }
                     >
                       <p className="whitespace-pre-wrap">{message.content}</p>
                       {message.sources?.length > 0 && (
@@ -1230,7 +1173,8 @@ ${widgetScriptSrc()}`;
                   />
                   <button
                     type="submit"
-                    className="px-4 text-sm font-semibold text-white rounded bg-slate-900"
+                    className="px-4 text-sm font-semibold text-white rounded"
+                    style={{ backgroundColor: widgetThemeForm.sendButtonColor }}
                     disabled={loading.widgetTest}
                   >
                     {loading.widgetTest ? "..." : "Send"}
@@ -1241,56 +1185,19 @@ ${widgetScriptSrc()}`;
               <button
                 type="button"
                 onClick={() => setWidgetPreviewOpen((value) => !value)}
-                className="absolute flex items-center justify-center w-16 h-16 text-white transition rounded-full shadow-2xl bottom-6 right-6 bg-slate-900 hover:bg-slate-800"
+                className="absolute flex items-center justify-center w-16 h-16 text-white transition rounded-full shadow-2xl bottom-6 right-6"
+                style={{ backgroundColor: widgetThemeForm.launcherColor }}
                 title="Open chat"
                 aria-label="Open chat"
               >
-                <MessageSquare size={25} />
+                {renderLauncherIcon(25)}
               </button>
             </div>
           </section>
         </div>
       )}
 
-      <main className="mx-auto grid max-w-[1500px] grid-cols-1 gap-4 px-4 py-4 lg:grid-cols-[320px_minmax(0,1fr)] lg:px-6">
-        <aside className="space-y-4">
-          <section className="p-2 bg-white border rounded border-slate-200">
-            <div className="px-2 py-2 text-xs font-semibold tracking-wide uppercase text-slate-500">
-              Navigation
-            </div>
-            <nav className="space-y-1">
-              {isSuperAdmin && selectedCompany && (
-                <button
-                  type="button"
-                  onClick={backToSuperAdmin}
-                  className="flex items-center w-full gap-3 px-3 py-3 mb-2 text-sm font-semibold text-left transition bg-white border rounded border-slate-200 text-slate-700 hover:bg-slate-50"
-                >
-                  <Building2 size={17} />
-                  Superadmin Home
-                </button>
-              )}
-              {activeNavItems.map((item) => {
-                const Icon = item.icon;
-                return (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => setActiveSection(item.id)}
-                    className={classNames(
-                      "flex w-full items-center gap-3 rounded px-3 py-3 text-left text-sm font-semibold transition",
-                      activeSection === item.id
-                        ? "bg-slate-900 text-white"
-                        : "text-slate-700 hover:bg-slate-100"
-                    )}
-                  >
-                    <Icon size={17} />
-                    {item.label}
-                  </button>
-                );
-              })}
-            </nav>
-          </section>
-
+      <div className="grid grid-cols-1 gap-5">
           {false && isSuperAdmin && !selectedCompany && activeSection === "companies" && (
           <section className="bg-white border rounded border-slate-200">
             <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200">
@@ -1386,9 +1293,7 @@ ${widgetScriptSrc()}`;
             </form>
           </section>
           )}
-        </aside>
-
-        <section className="space-y-4">
+        <section className="space-y-5">
           {(notice || error) && (
             <div
               className={classNames(
@@ -1617,6 +1522,110 @@ ${widgetScriptSrc()}`;
   <p className="mt-1 text-xs text-slate-500">
     Select the login method needed by the company website before copying the embed code.
   </p>
+</div>
+
+<div className="pt-4 mt-4 border-t border-slate-200">
+  <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+    <div>
+      <div className="text-sm font-semibold text-slate-900">Widget Theme</div>
+      <p className="mt-1 text-xs text-slate-500">
+        Choose colors for the widget header, send button, and floating launcher.
+      </p>
+    </div>
+
+    <div className="flex flex-wrap gap-2">
+      <SecondaryButton onClick={handleSaveWidgetTheme} disabled={loading.companies}>
+        {loading.companies ? (
+          <Loader2 className="animate-spin" size={16} />
+        ) : (
+          <CheckCircle2 size={16} />
+        )}
+        Save Theme
+      </SecondaryButton>
+
+      <SecondaryButton onClick={handleResetWidgetTheme}>
+        Reset
+      </SecondaryButton>
+    </div>
+  </div>
+
+  <div className="grid gap-3 mt-3 md:grid-cols-3">
+    <Field label="Header color">
+      <input
+        type="color"
+        className="w-full h-10 p-1 bg-white border rounded border-slate-200"
+        value={widgetThemeForm.headerColor}
+        onChange={(event) =>
+          setWidgetThemeForm((current) => ({
+            ...current,
+            headerColor: event.target.value,
+          }))
+        }
+      />
+    </Field>
+
+    <Field label="Send button color">
+      <input
+        type="color"
+        className="w-full h-10 p-1 bg-white border rounded border-slate-200"
+        value={widgetThemeForm.sendButtonColor}
+        onChange={(event) =>
+          setWidgetThemeForm((current) => ({
+            ...current,
+            sendButtonColor: event.target.value,
+          }))
+        }
+      />
+    </Field>
+
+    <Field label="Launcher color">
+      <input
+        type="color"
+        className="w-full h-10 p-1 bg-white border rounded border-slate-200"
+        value={widgetThemeForm.launcherColor}
+        onChange={(event) =>
+          setWidgetThemeForm((current) => ({
+            ...current,
+            launcherColor: event.target.value,
+          }))
+        }
+      />
+    </Field>
+  </div>
+
+  <div className="grid gap-3 mt-3 md:grid-cols-[minmax(0,1fr)_220px]">
+    <Field label="Launcher icon">
+      <select
+        className="w-full h-10 px-3 text-sm transition bg-white border rounded outline-none border-slate-200 text-slate-900 focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
+        value={widgetThemeForm.launcherIcon}
+        onChange={(event) =>
+          setWidgetThemeForm((current) => ({
+            ...current,
+            launcherIcon: event.target.value,
+          }))
+        }
+      >
+        {widgetLauncherIconOptions.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    </Field>
+
+    <div>
+      <span className="block mb-1 text-xs font-semibold tracking-wide uppercase text-slate-500">
+        Launcher preview
+      </span>
+
+      <div
+        className="flex items-center justify-center w-12 h-12 text-white rounded-full shadow"
+        style={{ backgroundColor: widgetThemeForm.launcherColor }}
+      >
+        {renderLauncherIcon(22)}
+      </div>
+    </div>
+  </div>
 </div>
 
                       </div>
@@ -2300,19 +2309,47 @@ ${widgetScriptSrc()}`;
 
               {activeSection === "history" && (
               <section className="bg-white border rounded border-slate-200">
-                <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200">
+                <div className="flex flex-col gap-3 px-4 py-3 border-b border-slate-200 lg:flex-row lg:items-center lg:justify-between">
                   <div className="flex items-center gap-2">
                     <History size={18} />
                     <h2 className="font-semibold text-slate-950">Conversations</h2>
                   </div>
-                  <IconButton title="Refresh conversations" onClick={() => loadConversations()}>
-                    <RefreshCcw size={16} />
-                  </IconButton>
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                    <form className="flex min-w-0 gap-2" onSubmit={handleConversationSearch}>
+                      <div className="relative min-w-0 flex-1 sm:w-80">
+                        <Search
+                          className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+                          size={16}
+                        />
+                        <input
+                          className="h-9 w-full rounded border border-slate-200 bg-white pl-9 pr-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
+                          value={conversationSearch}
+                          onChange={(event) => setConversationSearch(event.target.value)}
+                          placeholder="Search email, phone, employee ID, session"
+                        />
+                      </div>
+                      <SecondaryButton type="submit" disabled={loading.conversations}>
+                        Search
+                      </SecondaryButton>
+                      {conversationSearch.trim() && (
+                        <SecondaryButton type="button" onClick={clearConversationSearch}>
+                          Clear
+                        </SecondaryButton>
+                      )}
+                    </form>
+                    <IconButton title="Refresh conversations" onClick={() => loadConversations()}>
+                      <RefreshCcw size={16} />
+                    </IconButton>
+                  </div>
                 </div>
                 <div className="grid gap-0 md:grid-cols-[340px_minmax(0,1fr)]">
                   <div className="max-h-[380px] overflow-y-auto border-b border-slate-200 p-2 md:border-b-0 md:border-r">
                     {conversations.length === 0 ? (
-                      <p className="p-4 text-sm text-slate-500">No conversations yet.</p>
+                      <p className="p-4 text-sm text-slate-500">
+                        {conversationSearch.trim()
+                          ? "No conversations match this search."
+                          : "No conversations yet."}
+                      </p>
                     ) : (
                       conversations.map((conversation) => (
                         <button
@@ -2327,9 +2364,15 @@ ${widgetScriptSrc()}`;
                           <Search className="shrink-0 text-slate-400" size={16} />
                           <span className="min-w-0">
                             <span className="block font-semibold truncate text-slate-800">
-                              {conversation.customerPhone || conversation.sessionId}
+                              {conversation.customerEmail ||
+                                conversation.customerPhone ||
+                                conversation.customerExternalId ||
+                                conversation.sessionId}
                             </span>
-                            <span className="block text-xs text-slate-500">{formatDate(conversation.updatedAt)}</span>
+                            <span className="block truncate text-xs text-slate-500">
+                              {conversation.customerAuthProvider || conversation.channel || "web"} ·{" "}
+                              {formatDate(conversation.updatedAt)}
+                            </span>
                           </span>
                         </button>
                       ))
@@ -2471,7 +2514,7 @@ npm.cmd run build:widget`}
                             <p className="mt-1 text-sm text-slate-500">Customer website page</p>
                           </div>
                           <div className="absolute bottom-20 right-4 flex h-[220px] w-[250px] flex-col overflow-hidden rounded border border-slate-200 bg-white shadow-xl">
-                            <div className="px-3 py-2 text-white bg-slate-900">
+                            <div className="px-3 py-2 text-white" style={{ backgroundColor: widgetThemeForm.headerColor }}>
                               <div className="text-xs font-bold">{selectedCompany.name} Support</div>
                               <div className="text-[11px] text-slate-300">Chat widget panel</div>
                             </div>
@@ -2479,7 +2522,7 @@ npm.cmd run build:widget`}
                               <div className="max-w-[85%] rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700">
                                 Hi, how can I help?
                               </div>
-                              <div className="ml-auto max-w-[85%] rounded bg-slate-900 px-2 py-1 text-xs text-white">
+                              <div className="ml-auto max-w-[85%] rounded px-2 py-1 text-xs text-white" style={{ backgroundColor: widgetThemeForm.sendButtonColor }}>
                                 Ask a question
                               </div>
                             </div>
@@ -2489,8 +2532,8 @@ npm.cmd run build:widget`}
                               </div>
                             </div>
                           </div>
-                          <div className="absolute flex items-center justify-center text-white rounded-full shadow-xl bottom-4 right-4 h-14 w-14 bg-slate-900">
-                            <MessageSquare size={22} />
+                          <div className="absolute flex items-center justify-center text-white rounded-full shadow-xl bottom-4 right-4 h-14 w-14" style={{ backgroundColor: widgetThemeForm.launcherColor }}>
+                            {renderLauncherIcon(22)}
                           </div>
                         </div>
                       </div>
@@ -2501,7 +2544,7 @@ npm.cmd run build:widget`}
             </>
           )}
         </section>
-      </main>
-    </div>
+      </div>
+    </AdminShell>
   );
 }
