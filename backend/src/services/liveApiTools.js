@@ -1,6 +1,6 @@
 const axios = require("axios");
 const config = require("../config");
-const { decryptSecret } = require("./crypto");
+const { decryptSecret, encryptSecret } = require("./crypto");
 const LiveApiCallLog = require("../models/LiveApiCallLog");
 
 function sanitizeToolsForPlanner(tools) {
@@ -142,6 +142,41 @@ function sanitizeResponse(data) {
   return output;
 }
 
+async function refreshOAuth2Token(tool) {
+  const refreshToken = decryptSecret(tool.encryptedRefreshToken);
+  const clientSecret = tool.encryptedTokenClientSecret
+    ? decryptSecret(tool.encryptedTokenClientSecret)
+    : "";
+
+  const body = new URLSearchParams({
+    grant_type:    "refresh_token",
+    refresh_token: refreshToken,
+    client_id:     tool.tokenClientId || "",
+    client_secret: clientSecret,
+  });
+
+  const response = await axios.post(tool.tokenRefreshUrl, body.toString(), {
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    timeout: 10000,
+    validateStatus: () => true,
+  });
+
+  if (response.status !== 200 || !response.data?.access_token) {
+    throw new Error(
+      `OAuth2 token refresh failed (HTTP ${response.status}): ${JSON.stringify(response.data)}`,
+    );
+  }
+
+  const { access_token, expires_in, refresh_token: newRefreshToken } = response.data;
+
+  tool.encryptedAuthSecret = encryptSecret(access_token);
+  tool.tokenExpiresAt = new Date(Date.now() + (Number(expires_in) || 3600) * 1000);
+  if (newRefreshToken) {
+    tool.encryptedRefreshToken = encryptSecret(newRefreshToken);
+  }
+  await tool.save();
+}
+
 async function logApiCall(tool, result, durationMs, userContext) {
   try {
     await LiveApiCallLog.create({
@@ -164,6 +199,14 @@ async function logApiCall(tool, result, durationMs, userContext) {
 }
 
 async function executePlannedTool(tool, plan, userContext = {}) {
+  // Refresh OAuth2 access token if it is expired or within 60 s of expiry
+  if (tool.encryptedRefreshToken && tool.tokenRefreshUrl) {
+    const expiresAt = tool.tokenExpiresAt ? new Date(tool.tokenExpiresAt).getTime() : 0;
+    if (!expiresAt || Date.now() + 60_000 >= expiresAt) {
+      await refreshOAuth2Token(tool);
+    }
+  }
+
   assertRequiredParams(tool, plan);
 
   const path = applyPathParams(tool.pathTemplate, plan.path_params || {});

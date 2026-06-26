@@ -74,6 +74,45 @@ async function ensureCompany(companyId) {
   return Company.findById(companyId);
 }
 
+function extractApiCredentials(body = {}) {
+  const {
+    authSecret,
+    refreshToken,
+    clientId,
+    clientSecret,
+    tokenRefreshUrl,
+    tokenExpiresIn,     // seconds until access token expires (from OAuth response)
+    organizationId,     // Zoho Books / similar: maps to X-com-zoho-books-organizationid
+    staticHeaders: rawHeaders,
+  } = body;
+
+  let staticHeaders = {};
+  if (rawHeaders) {
+    try {
+      staticHeaders = typeof rawHeaders === "string" ? JSON.parse(rawHeaders) : rawHeaders;
+    } catch {
+      // ignore malformed JSON — treat as empty
+    }
+  }
+  if (organizationId) {
+    staticHeaders["X-com-zoho-books-organizationid"] = String(organizationId);
+  }
+
+  const tokenExpiresAt = tokenExpiresIn
+    ? new Date(Date.now() + Number(tokenExpiresIn) * 1000)
+    : null;
+
+  return {
+    authSecret:     authSecret     || "",
+    refreshToken:   refreshToken   || "",
+    clientId:       clientId       || "",
+    clientSecret:   clientSecret   || "",
+    tokenRefreshUrl: tokenRefreshUrl || "",
+    tokenExpiresAt,
+    staticHeaders,
+  };
+}
+
 router.post("/", upload.single("file"), async (req, res) => {
   try {
     const company = await ensureCompany(req.params.companyId);
@@ -114,12 +153,14 @@ router.post("/", upload.single("file"), async (req, res) => {
 
       let apiToolResult = null;
       if (doc.docType === "api") {
+        const credentials = extractApiCredentials(req.body);
         try {
           apiToolResult = await syncApiDocTools({
             companyId: company._id,
             documentId: doc._id,
             filePath: doc.filePath,
             documentName: doc.originalName,
+            ...credentials,
           });
         } catch (toolErr) {
           apiToolResult = {
@@ -264,12 +305,14 @@ router.post("/:documentId/reindex", async (req, res) => {
 
       let apiToolResult = null;
       if (doc.docType === "api") {
+        const credentials = extractApiCredentials(req.body);
         try {
           apiToolResult = await syncApiDocTools({
             companyId: req.params.companyId,
             documentId: doc._id,
             filePath: doc.filePath,
             documentName: doc.originalName,
+            ...credentials,
           });
         } catch (toolErr) {
           apiToolResult = {

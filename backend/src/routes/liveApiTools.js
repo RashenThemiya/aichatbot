@@ -28,6 +28,11 @@ function toSafeTool(tool) {
     authHeaderName: tool.authHeaderName,
     authValuePrefix: tool.authValuePrefix,
     hasAuthSecret: Boolean(tool.encryptedAuthSecret),
+    // OAuth2 refresh — never expose encrypted values, only metadata
+    hasRefreshToken:  Boolean(tool.encryptedRefreshToken),
+    tokenClientId:    tool.tokenClientId   || "",
+    tokenRefreshUrl:  tool.tokenRefreshUrl || "",
+    tokenExpiresAt:   tool.tokenExpiresAt  || null,
     userTokenMode: tool.userTokenMode,
     userTokenHeader: tool.userTokenHeader,
     keywordHints: tool.keywordHints,
@@ -67,6 +72,11 @@ router.post("/", async (req, res) => {
       authHeaderName,
       authValuePrefix,
       authSecret,
+      refreshToken,
+      clientId,
+      clientSecret,
+      tokenRefreshUrl,
+      tokenExpiresIn,
       userTokenMode,
       userTokenHeader,
       keywordHints,
@@ -94,7 +104,14 @@ router.post("/", async (req, res) => {
       authType: authType || "none",
       authHeaderName: authHeaderName || "Authorization",
       authValuePrefix: authValuePrefix || "Bearer ",
-      encryptedAuthSecret: authSecret ? encryptSecret(authSecret) : "",
+      encryptedAuthSecret:        authSecret    ? encryptSecret(authSecret)    : "",
+      encryptedRefreshToken:      refreshToken  ? encryptSecret(refreshToken)  : "",
+      tokenClientId:              clientId      ? String(clientId)             : "",
+      encryptedTokenClientSecret: clientSecret  ? encryptSecret(clientSecret)  : "",
+      tokenRefreshUrl:            tokenRefreshUrl ? String(tokenRefreshUrl)    : "",
+      tokenExpiresAt:             tokenExpiresIn
+        ? new Date(Date.now() + Number(tokenExpiresIn) * 1000)
+        : null,
       userTokenMode: userTokenMode || "none",
       userTokenHeader: userTokenHeader || "x-user-token",
       keywordHints: Array.isArray(keywordHints) ? keywordHints : [],
@@ -152,6 +169,29 @@ router.put("/:toolId", async (req, res) => {
       tool.encryptedAuthSecret = req.body.authSecret
         ? encryptSecret(req.body.authSecret)
         : "";
+    }
+    if (req.body.refreshToken !== undefined) {
+      tool.encryptedRefreshToken = req.body.refreshToken
+        ? encryptSecret(req.body.refreshToken)
+        : "";
+    }
+    if (req.body.clientId !== undefined) {
+      tool.tokenClientId = req.body.clientId ? String(req.body.clientId) : "";
+    }
+    if (req.body.clientSecret !== undefined) {
+      tool.encryptedTokenClientSecret = req.body.clientSecret
+        ? encryptSecret(req.body.clientSecret)
+        : "";
+    }
+    if (req.body.tokenRefreshUrl !== undefined) {
+      tool.tokenRefreshUrl = req.body.tokenRefreshUrl
+        ? String(req.body.tokenRefreshUrl)
+        : "";
+    }
+    if (req.body.tokenExpiresIn !== undefined) {
+      tool.tokenExpiresAt = req.body.tokenExpiresIn
+        ? new Date(Date.now() + Number(req.body.tokenExpiresIn) * 1000)
+        : null;
     }
 
     await tool.save();

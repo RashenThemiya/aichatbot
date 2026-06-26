@@ -3,6 +3,7 @@ const path = require("path");
 const yaml = require("js-yaml");
 
 const LiveApiTool = require("../models/LiveApiTool");
+const { encryptSecret } = require("./crypto");
 
 const METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);
 
@@ -551,6 +552,15 @@ async function syncApiDocTools({
   documentId,
   filePath,
   documentName,
+  // OAuth2 / auth credentials applied to every generated tool
+  authSecret,
+  refreshToken,
+  clientId,
+  clientSecret,
+  tokenRefreshUrl,
+  tokenExpiresAt,
+  // Extra headers merged into staticHeaders on every tool (e.g. Zoho org ID)
+  staticHeaders,
 }) {
   await LiveApiTool.deleteMany({
     companyId,
@@ -567,6 +577,17 @@ async function syncApiDocTools({
     };
   }
 
+  // Build the credential patch applied uniformly to all generated tools
+  const credentialPatch = {};
+  if (authSecret)       credentialPatch.encryptedAuthSecret       = encryptSecret(authSecret);
+  if (refreshToken)     credentialPatch.encryptedRefreshToken     = encryptSecret(refreshToken);
+  if (clientId)         credentialPatch.tokenClientId             = String(clientId);
+  if (clientSecret)     credentialPatch.encryptedTokenClientSecret = encryptSecret(clientSecret);
+  if (tokenRefreshUrl)  credentialPatch.tokenRefreshUrl           = String(tokenRefreshUrl);
+  if (tokenExpiresAt)   credentialPatch.tokenExpiresAt            = new Date(tokenExpiresAt);
+
+  const extraHeaders = staticHeaders && typeof staticHeaders === "object" ? staticHeaders : {};
+
   const created = await LiveApiTool.insertMany(
     tools.map((tool) => ({
       companyId,
@@ -575,6 +596,8 @@ async function syncApiDocTools({
       isEnabled: true,
       timeoutMs: 10000,
       ...tool,
+      staticHeaders: { ...(tool.staticHeaders || {}), ...extraHeaders },
+      ...credentialPatch,
     })),
   );
 
