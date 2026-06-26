@@ -5,7 +5,12 @@ const { v4: uuidv4 } = require("uuid");
 const config = require("../config");
 const Company = require("../models/Company");
 const Conversation = require("../models/Conversation");
+const LiveApiTool = require("../models/LiveApiTool");
 const ragClient = require("../services/ragClient");
+const {
+  executePlannedTool,
+  sanitizeToolsForPlanner,
+} = require("../services/liveApiTools");
 const { preprocessUserMessage } = require("../services/messagePreprocessor");
 const { verifyGoogleIdToken } = require("../services/googleAuth");
 const { verifyExternalUserToken } = require("../services/externalUserAuth");
@@ -48,6 +53,39 @@ function safeTimingCompare(a, b) {
   if (left.length !== right.length) return false;
 
   return crypto.timingSafeEqual(left, right);
+}
+
+function asText(value, maxLen = 3500) {
+  const text =
+    typeof value === "string" ? value : JSON.stringify(value, null, 2);
+  return text.length > maxLen ? `${text.slice(0, maxLen)}...` : text;
+}
+
+function buildLiveContext(liveResult) {
+  if (!liveResult) return "";
+  const responseBody = liveResult.ok
+    ? asText(liveResult.response)
+    : `Live API call failed (${liveResult.status || "error"}): ${liveResult.error || "Unknown error"}`;
+
+  return [
+    "Live API Result:",
+    `Tool: ${liveResult.toolName}`,
+    `Request: ${liveResult.method} ${liveResult.url}`,
+    `Status: ${liveResult.status ?? "unknown"}`,
+    `Body: ${responseBody}`,
+  ].join("\n");
+}
+
+function liveSourceFromResult(liveResult) {
+  if (!liveResult) return [];
+  return [
+    {
+      documentId: `live_api:${liveResult.toolId}`,
+      documentName: `Live API - ${liveResult.toolName}`,
+      content: asText(liveResult.response, 280),
+      score: liveResult.ok ? 1 : 0,
+    },
+  ];
 }
 
 async function validateWidgetApiKey(req, company) {
@@ -283,12 +321,14 @@ router.post("/", async (req, res) => {
 
     await ensureWidgetAccess(req, company);
 
+
     const {
       message,
       sessionId,
       customerName,
       customerEmail,
       customerPhone,
+      userToken,
       customerExternalId,
       customerAuthProvider,
     } = req.body;
@@ -344,17 +384,68 @@ router.post("/", async (req, res) => {
       });
     }
 
-    const ragResult = await ragClient.queryKnowledge({
+    const userContext = {
+      sessionId: sid,
+      userIdentifier: customerEmail || customerName || customerPhone || "",
+      userToken: userToken || "",
+    };
+
+    let liveResult = null;
+    const liveTools = await LiveApiTool.find({
+      companyId: company._id,
+      isEnabled: true,
+    });
+
+    if (liveTools.length) {
+      try {
+        const toolPlan = await ragClient.planLiveTool({
+          question: message.trim(),
+          tools: sanitizeToolsForPlanner(liveTools),
+        });
+
+        if (
+          toolPlan?.use_live_tool &&
+          toolPlan.tool_id &&
+          Number(toolPlan.confidence || 0) >= config.liveApiMinPlanConfidence
+        ) {
+          const selectedTool = liveTools.find(
+            (item) => item._id.toString() === toolPlan.tool_id,
+          );
+          if (selectedTool) {
+            try {
+              liveResult = await executePlannedTool(selectedTool, toolPlan, userContext);
+            } catch (execErr) {
+              liveResult = {
+                toolId: selectedTool._id.toString(),
+                toolName: selectedTool.name,
+                method: selectedTool.method,
+                url: `${selectedTool.baseUrl}${selectedTool.pathTemplate}`,
+                status: null,
+                ok: false,
+                error: execErr.message,
+                response: null,
+              };
+            }
+          }
+        }
+      } catch {
+        liveResult = null;
+      }
+    }
+
+    const ragResult = await ragClient.queryKnowledgeWithContext({
       companyId: company._id.toString(),
       question: preprocessed.question,
+      extraContext: buildLiveContext(liveResult),
     });
 
     const sources = mapSources(ragResult.sources || []);
+    const finalSources = [...sources, ...liveSourceFromResult(liveResult)];
 
     conversation.messages.push({
       role: "assistant",
       content: ragResult.answer,
-      sources,
+      sources: finalSources,
     });
 
     await conversation.save();
@@ -362,8 +453,15 @@ router.post("/", async (req, res) => {
     res.json({
       sessionId: sid,
       answer: ragResult.answer,
-      sources,
+      sources: finalSources,
       conversationId: conversation._id,
+      liveApi: liveResult
+        ? {
+            toolName: liveResult.toolName,
+            status: liveResult.status,
+            ok: liveResult.ok,
+          }
+        : null,
     });
   } catch (err) {
     const detail = err.response?.data?.detail || err.message;

@@ -20,7 +20,10 @@ async function request(path, options = {}) {
     path,
     hasToken: Boolean(authToken),
   });
-  const response = await fetch(`${API_BASE_URL}${path}`, { ...options, headers });
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...options,
+    headers,
+  });
   const contentType = response.headers.get("content-type") || "";
   const data = contentType.includes("application/json")
     ? await response.json()
@@ -152,9 +155,10 @@ export const api = {
   },
   documents: {
     list: (companyId) => request(`/api/companies/${companyId}/documents`),
-    upload: (companyId, file) => {
+    upload: (companyId, file, docType = "pdf") => {
       const formData = new FormData();
       formData.append("file", file);
+      formData.append("docType", docType);
       return request(`/api/companies/${companyId}/documents`, {
         method: "POST",
         body: formData,
@@ -166,6 +170,25 @@ export const api = {
       }),
     remove: (companyId, documentId) =>
       request(`/api/companies/${companyId}/documents/${documentId}`, {
+        method: "DELETE",
+      }),
+  },
+  liveApiTools: {
+    list: (companyId) => request(`/api/companies/${companyId}/live-api-tools`),
+    create: (companyId, payload) =>
+      request(`/api/companies/${companyId}/live-api-tools`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      }),
+    update: (companyId, toolId, payload) =>
+      request(`/api/companies/${companyId}/live-api-tools/${toolId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      }),
+    remove: (companyId, toolId) =>
+      request(`/api/companies/${companyId}/live-api-tools/${toolId}`, {
         method: "DELETE",
       }),
   },

@@ -14,6 +14,7 @@ const adminUsersRouter = require("./routes/adminUsers");
 const companiesRouter = require("./routes/companies");
 const documentsRouter = require("./routes/documents");
 const chatRouter = require("./routes/chat");
+const liveApiToolsRouter = require("./routes/liveApiTools");
 const whatsappIntegrationsRouter = require("./routes/whatsappIntegrations");
 const smsIntegrationsRouter = require("./routes/smsIntegrations");
 const whatsappRoutes = require("./modules/whatsapp/whatsapp.routes");
@@ -41,7 +42,8 @@ app.get("/health", async (_req, res) => {
   res.json({
     status: "ok",
     service: "backend",
-    mongodb: mongoose.connection.readyState === 1 ? "connected" : "disconnected",
+    mongodb:
+      mongoose.connection.readyState === 1 ? "connected" : "disconnected",
     ragService: ragStatus,
   });
 });
@@ -50,6 +52,11 @@ app.use("/api/auth", authRouter);
 app.use("/api/admin-users", requireAuth, adminUsersRouter);
 app.use("/api/companies", requireAuth, companiesRouter);
 app.use("/api/companies/:companyId/documents", requireAuth, documentsRouter);
+app.use(
+  "/api/companies/:companyId/live-api-tools",
+  requireAuth,
+  liveApiToolsRouter,
+);
 app.use("/api/companies/:companyId/chat", requireAuth, chatRouter);
 app.use("/widget/companies/:companyId/chat", chatRouter);
 app.use("/api/companies/:companyId/whatsapp-integration", whatsappIntegrationsRouter);
@@ -61,7 +68,10 @@ app.use((err, _req, res, _next) => {
   if (err instanceof multer.MulterError) {
     return res.status(400).json({ error: err.message });
   }
-  if (err.message === "Only PDF files are allowed") {
+  if (
+    err.message === "Only PDF files are allowed" ||
+    err.message?.startsWith("Allowed file types:")
+  ) {
     return res.status(400).json({ error: err.message });
   }
   res.status(500).json({ error: err.message || "Internal server error" });

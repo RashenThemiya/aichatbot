@@ -900,16 +900,26 @@ ${widgetScriptSrc()}`;
     }
   }
 
-  async function handleUpload(event) {
+  async function handleUpload(event, docType = "pdf") {
     const file = event.target.files?.[0];
     event.target.value = "";
     if (!file || !selectedCompany) return;
-    const result = await runTask(
-      "upload",
-      () => api.documents.upload(selectedCompany._id, file),
-      "Document uploaded and indexed"
+    const result = await runTask("upload", () =>
+      api.documents.upload(selectedCompany._id, file, docType),
     );
+    if (result?.warning) setNotice(result.warning);
+    else if (docType === "api")
+      setNotice("API document uploaded, indexed, and live tools generated");
+    else setNotice("Document uploaded and indexed");
     if (result) await loadDocuments();
+  }
+
+  function handleUploadPdf(event) {
+    return handleUpload(event, "pdf");
+  }
+
+  function handleUploadApi(event) {
+    return handleUpload(event, "api");
   }
 
   async function handleReindex(documentId) {
@@ -2192,7 +2202,18 @@ ${widgetScriptSrc()}`;
                           type="file"
                           accept="application/pdf"
                           className="sr-only"
-                          onChange={handleUpload}
+                          onChange={handleUploadPdf}
+                          disabled={loading.upload}
+                        />
+                      </label>
+                      <label className="inline-flex items-center justify-center gap-2 px-3 text-sm font-semibold text-slate-700 transition rounded shadow-sm cursor-pointer h-9 bg-white border border-slate-300 hover:bg-slate-50">
+                        <Upload size={16} />
+                        Upload API Doc
+                        <input
+                          type="file"
+                          accept=".json,.yaml,.yml,.md,.txt,application/json,text/plain,text/markdown"
+                          className="sr-only"
+                          onChange={handleUploadApi}
                           disabled={loading.upload}
                         />
                       </label>
@@ -2203,6 +2224,7 @@ ${widgetScriptSrc()}`;
                       <thead className="text-xs font-semibold tracking-wide text-left uppercase bg-slate-50 text-slate-500">
                         <tr>
                           <th className="px-4 py-3">File</th>
+                          <th className="px-4 py-3">Type</th>
                           <th className="px-4 py-3">Status</th>
                           <th className="px-4 py-3">Chunks</th>
                           <th className="px-4 py-3">Updated</th>
@@ -2212,7 +2234,7 @@ ${widgetScriptSrc()}`;
                       <tbody className="divide-y divide-slate-100">
                         {documents.length === 0 ? (
                           <tr>
-                            <td className="px-4 py-8 text-center text-slate-500" colSpan={5}>
+                            <td className="px-4 py-8 text-center text-slate-500" colSpan={6}>
                               No documents uploaded.
                             </td>
                           </tr>
@@ -2224,6 +2246,11 @@ ${widgetScriptSrc()}`;
                                 {document.indexError && (
                                   <div className="mt-1 text-xs truncate text-rose-600">{document.indexError}</div>
                                 )}
+                              </td>
+                              <td className="px-4 py-3 text-slate-600">
+                                <span className="inline-flex rounded bg-slate-100 px-2 py-1 text-xs font-semibold uppercase tracking-wide text-slate-700">
+                                  {document.docType === "api" ? "API" : "PDF"}
+                                </span>
                               </td>
                               <td className="px-4 py-3">
                                 <StatusBadge status={document.status} />
