@@ -152,8 +152,11 @@ export const api = {
   },
   documents: {
     list: (companyId) => request(`/api/companies/${companyId}/documents`),
-    upload: (companyId, file) => {
+    upload: (companyId, files) => {
       const formData = new FormData();
+      const [file] = Array.from(files);
+      if (!file) throw new Error("A PDF file is required");
+      formData.append("relativePaths", file.webkitRelativePath || file.name);
       formData.append("file", file);
       return request(`/api/companies/${companyId}/documents`, {
         method: "POST",

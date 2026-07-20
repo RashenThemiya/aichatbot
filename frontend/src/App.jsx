@@ -81,6 +81,7 @@ export default function App() {
   const [smsValidation, setSmsValidation] = useState(null);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
+  const [uploadProgress, setUploadProgress] = useState(null);
   const [loading, setLoading] = useState({
     health: false,
     companies: false,
@@ -901,15 +902,55 @@ ${widgetScriptSrc()}`;
   }
 
   async function handleUpload(event) {
-    const file = event.target.files?.[0];
+    const selectedFiles = Array.from(event.target.files || []);
     event.target.value = "";
-    if (!file || !selectedCompany) return;
-    const result = await runTask(
-      "upload",
-      () => api.documents.upload(selectedCompany._id, file),
-      "Document uploaded and indexed"
-    );
-    if (result) await loadDocuments();
+    const files = selectedFiles.filter((file) => {
+      const name = file.name || "";
+      return file.type === "application/pdf" || name.toLowerCase().endsWith(".pdf");
+    });
+    if (files.length === 0 || !selectedCompany) return;
+
+    setLoading((current) => ({ ...current, upload: true }));
+    setError("");
+    setNotice("");
+    setUploadProgress({ current: 1, total: files.length, fileName: files[0].name });
+
+    const failures = [];
+    let completed = 0;
+
+    try {
+      for (const [index, file] of files.entries()) {
+        setUploadProgress({ current: index + 1, total: files.length, fileName: file.name });
+        try {
+          await api.documents.upload(selectedCompany._id, [file]);
+          completed += 1;
+        } catch (err) {
+          console.error("[task] error upload", file.name, err);
+          failures.push({ fileName: file.name, message: err.message || "Upload failed" });
+        }
+      }
+
+      const refreshedDocuments = await api.documents.list(selectedCompany._id);
+      setDocuments(refreshedDocuments);
+
+      if (completed > 0) {
+        setNotice(
+          completed === 1
+            ? "1 document uploaded and indexed successfully"
+            : `${completed} documents uploaded and indexed successfully`
+        );
+      }
+      if (failures.length > 0) {
+        const failedNames = failures.map(({ fileName }) => fileName).join(", ");
+        setError(`${failures.length} upload${failures.length === 1 ? "" : "s"} failed: ${failedNames}`);
+      }
+    } catch (err) {
+      console.error("[task] error refreshing documents", err);
+      setError(err.message || "Uploads finished, but the document list could not be refreshed");
+    } finally {
+      setLoading((current) => ({ ...current, upload: false }));
+      setUploadProgress(null);
+    }
   }
 
   async function handleReindex(documentId) {
@@ -2185,19 +2226,59 @@ ${widgetScriptSrc()}`;
                       <IconButton title="Refresh documents" onClick={() => loadDocuments()}>
                         <RefreshCcw size={16} />
                       </IconButton>
-                      <label className="inline-flex items-center justify-center gap-2 px-3 text-sm font-semibold text-white transition rounded shadow-sm cursor-pointer h-9 bg-slate-900 hover:bg-slate-800">
-                        <Upload size={16} />
-                        Upload PDF
+                      <label className={classNames(
+                        "inline-flex items-center justify-center gap-2 px-3 text-sm font-semibold text-white transition rounded shadow-sm h-9 bg-slate-900",
+                        loading.upload ? "cursor-not-allowed opacity-70" : "cursor-pointer hover:bg-slate-800"
+                      )}>
+                        {loading.upload ? <Loader2 className="animate-spin" size={16} /> : <Upload size={16} />}
+                        {loading.upload ? "Uploading..." : "Upload PDFs"}
                         <input
                           type="file"
                           accept="application/pdf"
+                          multiple
                           className="sr-only"
                           onChange={handleUpload}
                           disabled={loading.upload}
                         />
                       </label>
+                      <label className={classNames(
+                        "inline-flex items-center justify-center gap-2 px-3 text-sm font-semibold transition bg-white border rounded shadow-sm h-9 border-slate-200 text-slate-700 shadow-slate-200/70",
+                        loading.upload ? "cursor-not-allowed opacity-70" : "cursor-pointer hover:bg-slate-50 hover:border-slate-300"
+                      )}>
+                        {loading.upload ? <Loader2 className="animate-spin" size={16} /> : <Upload size={16} />}
+                        {loading.upload ? "Uploading..." : "Upload folder"}
+                        <input
+                          type="file"
+                          accept="application/pdf"
+                          multiple
+                          className="sr-only"
+                          onChange={handleUpload}
+                          disabled={loading.upload}
+                          directory=""
+                          webkitdirectory=""
+                        />
+                      </label>
                     </div>
                   </div>
+                  {uploadProgress && (
+                    <div className="px-4 py-3 border-b border-slate-200 bg-slate-50" role="status" aria-live="polite">
+                      <div className="flex items-center justify-between gap-4 text-sm">
+                        <div className="flex min-w-0 items-center gap-2 font-medium text-slate-700">
+                          <Loader2 className="shrink-0 animate-spin" size={16} />
+                          <span className="truncate">Uploading and indexing {uploadProgress.fileName}</span>
+                        </div>
+                        <span className="shrink-0 text-slate-500">
+                          {uploadProgress.current} of {uploadProgress.total}
+                        </span>
+                      </div>
+                      <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-200">
+                        <div
+                          className="h-full rounded-full bg-slate-900 transition-all duration-300"
+                          style={{ width: `${((uploadProgress.current - 1) / uploadProgress.total) * 100}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
                   <div className="overflow-x-auto">
                     <table className="min-w-full text-sm divide-y divide-slate-200">
                       <thead className="text-xs font-semibold tracking-wide text-left uppercase bg-slate-50 text-slate-500">
