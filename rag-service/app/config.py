@@ -10,6 +10,9 @@ class Settings(BaseSettings):
     chunk_overlap: int = 200
     top_k: int = 5
     rag_service_port: int = 8000
+    openai_vision_model: str = "gpt-4o-mini"
+    describe_pdf_images: bool = True
+    min_image_size: int = 80  # px, skips tiny icons/bullets from triggering vision calls
 
     class Config:
         env_file = ".env"
