@@ -20,6 +20,22 @@ class RAGEngine:
         self.store = ChromaStore()
         self.openai = OpenAI(api_key=settings.openai_api_key)
 
+    def _expand_query(self, question: str) -> list[str]:
+     try:
+        resp = self.openai.chat.completions.create(
+            model=settings.openai_chat_model,
+            messages=[{
+                "role": "user",
+                "content": f'Generate 2 alternate phrasings of this question using different words/synonyms, one per line, no numbering:\n"{question}"',
+            }],
+            temperature=0.3,
+            max_tokens=100,
+        )
+        variants = [line.strip() for line in (resp.choices[0].message.content or "").split("\n") if line.strip()]
+        return [question] + variants[:2]
+     except Exception:
+        return [question]
+    
     def ingest(
         self,
         company_id: str,
@@ -54,7 +70,15 @@ class RAGEngine:
                 sources=[],
             )
 
-        retrieved = self.store.query(company_id, question, k)
+        queries = self._expand_query(question)
+        seen = {}
+        for q in queries:
+            for chunk in self.store.query(company_id, q, k):
+                key = (chunk["document_id"], chunk["content"][:50])
+                if key not in seen or chunk["score"] > seen[key]["score"]:
+                    seen[key] = chunk
+        retrieved = sorted(seen.values(), key=lambda c: c["score"], reverse=True)[:k]
+        
 
         if not retrieved:
             return QueryResponse(

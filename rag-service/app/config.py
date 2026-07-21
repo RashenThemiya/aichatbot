@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     chroma_persist_dir: str = "./chroma_data"
     chunk_size: int = 1000
     chunk_overlap: int = 200
-    top_k: int = 5
+    top_k: int = 6
     rag_service_port: int = 8000
     openai_vision_model: str = "gpt-4o-mini"
     describe_pdf_images: bool = True
