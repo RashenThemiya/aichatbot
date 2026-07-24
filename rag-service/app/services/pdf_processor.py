@@ -25,6 +25,16 @@ def _table_to_markdown(table: list[list[str | None]]) -> str:
         lines.append("| " + " | ".join(row) + " |")
     return "\n".join(lines)
 
+def _extract_tables(page):
+    tables = page.extract_tables()
+    if not tables:
+        tables = page.extract_tables(table_settings={
+            "vertical_strategy": "text",
+            "horizontal_strategy": "text",
+            "snap_y_tolerance": 5,
+        })
+    return tables
+
 
 def _describe_image(image_bytes: bytes) -> str:
     try:
@@ -56,10 +66,10 @@ def extract_text_from_pdf(file_path: str) -> str:
     with pdfplumber.open(str(path)) as pdf:
         for page in pdf.pages:
             parts = []
-            text = (page.extract_text() or "").strip()
+            text = (page.extract_text(layout=True) or page.extract_text() or "").strip()
             if text:
                 parts.append(text)
-            for table in page.extract_tables():
+            for table in _extract_tables(page):
                 md = _table_to_markdown(table)
                 if md:
                     parts.append(f"[Table]\n{md}")
@@ -135,3 +145,4 @@ def chunk_text(text: str) -> list[str]:
         overlapped.append(chunk)
 
     return overlapped
+
