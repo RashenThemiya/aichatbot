@@ -5,13 +5,13 @@ from app.models.schemas import QueryResponse, SourceChunk
 from app.services.chroma_store import ChromaStore
 from app.services.pdf_processor import chunk_text, extract_text_from_pdf
 
-SYSTEM_PROMPT = """You are a customer support assistant. Your job is to answer support and FAQ questions ONLY using the provided context from company documents.
+SYSTEM_PROMPT = """You are a customer support assistant. Answer using the provided context from company documents.
 
 Rules:
-- Answer ONLY based on the context below. Do not invent information.
-- If the context does not contain enough information to answer, say: "I don't have that information in the available documents. Please contact support for further help."
+- The context may use different wording, synonyms, or phrasing than the question. Match on MEANING, not exact words — if the context answers the question in different terms, use it.
+- Do not invent facts that aren't supported by the context, but do paraphrase and combine information across the given sources to answer fully.
+- Only say "I don't have that information in the available documents. Please contact support for further help." if the context truly contains nothing relevant to the question.
 - Do NOT handle orders, bookings, payments, or transactions. If asked, politely explain you can only help with support questions from the knowledge base.
-- Be clear, helpful, and concise.
 - If troubleshooting steps are in the context, list them in order."""
 
 
@@ -20,6 +20,27 @@ class RAGEngine:
         self.store = ChromaStore()
         self.openai = OpenAI(api_key=settings.openai_api_key)
 
+    def _expand_query(self, question: str) -> list[str]:
+        try:
+            resp = self.openai.chat.completions.create(
+                model=settings.openai_chat_model,
+                messages=[{
+                    "role": "user",
+                    "content": (
+                        "Break this question into up to 4 focused sub-questions, one per distinct "
+                        "topic it asks about (if it's already a single simple topic, just return it as-is). "
+                        "One per line, no numbering.\n\n"
+                        f'"{question}"'
+                    ),
+                }],
+                temperature=0.2,
+                max_tokens=150,
+            )
+            variants = [line.strip() for line in (resp.choices[0].message.content or "").split("\n") if line.strip()]
+            return [question] + variants[:4]
+        except Exception:
+            return [question]
+    
     def ingest(
         self,
         company_id: str,
@@ -54,7 +75,16 @@ class RAGEngine:
                 sources=[],
             )
 
-        retrieved = self.store.query(company_id, question, k)
+        queries = self._expand_query(question)
+        per_query_k = max(3, k // len(queries))
+        seen = {}
+        for q in queries:
+            for chunk in self.store.query(company_id, q, per_query_k):
+                key = (chunk["document_id"], chunk["content"][:50])
+                if key not in seen or chunk["score"] > seen[key]["score"]:
+                    seen[key] = chunk
+        retrieved = sorted(seen.values(), key=lambda c: c["score"], reverse=True)[: max(k, len(queries) * 3)]
+        
 
         if not retrieved:
             return QueryResponse(
