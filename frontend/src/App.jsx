@@ -43,6 +43,38 @@ import {
 import { api, formatDate, getAuthToken, setAuthToken } from "./lib/api";
 import { classNames } from "./utils/classNames";
 
+function InlineFormat({ text }) {
+  return String(text || "").split(/(\*\*[^*]+\*\*|\*[^*]+\*)/g).filter(Boolean).map((part, index) => {
+    if (part.startsWith("**") && part.endsWith("**")) {
+      return <strong key={index}>{part.slice(2, -2)}</strong>;
+    }
+    if (part.startsWith("*") && part.endsWith("*")) {
+      return <em key={index}>{part.slice(1, -1)}</em>;
+    }
+    return <Fragment key={index}>{part}</Fragment>;
+  });
+}
+
+function FormattedAnswer({ text }) {
+  return (
+    <div className="space-y-1 text-sm leading-6">
+      {String(text || "").split("\n").map((line, index) => {
+        const bullet = line.match(/^\s*[-*]\s+(.+)/);
+        return bullet ? (
+          <div key={index} className="flex gap-2 pl-1">
+            <span aria-hidden="true">•</span>
+            <span><InlineFormat text={bullet[1]} /></span>
+          </div>
+        ) : (
+          <p key={index} className={line ? "" : "h-2"}>
+            <InlineFormat text={line} />
+          </p>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function App() {
   const [currentUser, setCurrentUser] = useState(null);
   const [activeSection, setActiveSection] = useState("dashboard");
@@ -54,6 +86,7 @@ export default function App() {
   const [companies, setCompanies] = useState([]);
   const [selectedId, setSelectedId] = useState("");
   const [documents, setDocuments] = useState([]);
+  const [selectedDocumentIds, setSelectedDocumentIds] = useState([]);
   const [conversations, setConversations] = useState([]);
   const [conversationSearch, setConversationSearch] = useState("");
   const [selectedConversation, setSelectedConversation] = useState(null);
@@ -179,10 +212,17 @@ export default function App() {
   async function loadDocuments(companyId = selectedId) {
     if (!companyId) {
       setDocuments([]);
+      setSelectedDocumentIds([]);
       return;
     }
     const result = await runTask("documents", () => api.documents.list(companyId));
-    if (result) setDocuments(result);
+    if (result) {
+      setDocuments(result);
+      const availableIds = new Set(result.map((document) => document._id));
+      setSelectedDocumentIds((current) =>
+        current.filter((documentId) => availableIds.has(documentId))
+      );
+    }
   }
 
   async function loadConversations(companyId = selectedId, search = conversationSearch) {
@@ -746,7 +786,12 @@ ${widgetScriptSrc()}`;
     if (result) {
       setWidgetTestMessages((current) => [
         ...current,
-        { role: "assistant", content: result.answer, sources: result.sources || [] },
+        {
+          role: "assistant",
+          content: result.answer,
+          sources: result.sources || [],
+          conversationId: result.conversationId,
+        },
       ]);
     }
   }
@@ -953,6 +998,30 @@ ${widgetScriptSrc()}`;
     }
   }
 
+  async function handleWidgetFeedback(messageIndex, feedback) {
+    const message = widgetTestMessages[messageIndex];
+    if (!message?.conversationId || !selectedCompany) return;
+    setWidgetTestMessages((current) =>
+      current.map((item, index) => index === messageIndex ? { ...item, feedback } : item)
+    );
+    try {
+      const response = await fetch(
+        `${api.baseUrl}/widget/companies/${selectedCompany._id}/chat/feedback`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Widget-API-Key": widgetApiKeyInput.trim(),
+          },
+          body: JSON.stringify({ conversationId: message.conversationId, feedback }),
+        }
+      );
+      if (!response.ok) throw new Error("Unable to save feedback");
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
   async function handleReindex(documentId) {
     const result = await runTask(
       "documents",
@@ -970,7 +1039,44 @@ ${widgetScriptSrc()}`;
       () => api.documents.remove(selectedCompany._id, documentId),
       "Document deleted"
     );
-    if (result) await loadDocuments();
+    if (result) {
+      setSelectedDocumentIds((current) => current.filter((id) => id !== documentId));
+      await loadDocuments();
+    }
+  }
+
+  function toggleDocumentSelection(documentId) {
+    setSelectedDocumentIds((current) =>
+      current.includes(documentId)
+        ? current.filter((id) => id !== documentId)
+        : [...current, documentId]
+    );
+  }
+
+  function toggleAllDocuments() {
+    setSelectedDocumentIds((current) =>
+      current.length === documents.length
+        ? []
+        : documents.map((document) => document._id)
+    );
+  }
+
+  async function handleBulkDeleteDocuments() {
+    if (!selectedCompany || selectedDocumentIds.length === 0) return;
+    const count = selectedDocumentIds.length;
+    const ok = window.confirm(
+      `Delete ${count} selected PDF${count === 1 ? "" : "s"} and their vectors?`
+    );
+    if (!ok) return;
+    const result = await runTask(
+      "documents",
+      () => api.documents.removeBulk(selectedCompany._id, selectedDocumentIds),
+      `${count} document${count === 1 ? "" : "s"} deleted`
+    );
+    if (result) {
+      setSelectedDocumentIds([]);
+      await loadDocuments();
+    }
   }
 
   async function handleChat(event) {
@@ -984,6 +1090,16 @@ ${widgetScriptSrc()}`;
       setChatSessionId(result.sessionId || "");
       setChatMessage("");
       await loadConversations();
+    }
+  }
+
+  async function handleChatFeedback(feedback) {
+    if (!selectedCompany || !chatResult?.conversationId) return;
+    setChatResult((current) => ({ ...current, feedback }));
+    try {
+      await api.chat.feedback(selectedCompany._id, chatResult.conversationId, feedback);
+    } catch (err) {
+      setError(err.message || "Unable to save feedback");
     }
   }
 
@@ -1196,14 +1312,46 @@ ${widgetScriptSrc()}`;
                           : undefined
                       }
                     >
-                      <p className="whitespace-pre-wrap">{message.content}</p>
+                      <FormattedAnswer text={message.content} />
                       {message.sources?.length > 0 && (
                         <div className="pt-2 mt-2 text-xs border-t border-slate-200 text-slate-500">
                           Sources: {message.sources.map((source) => source.documentName).filter(Boolean).join(", ")}
                         </div>
                       )}
+                      {message.role === "assistant" && message.conversationId && (
+                        <div className="flex items-center gap-2 pt-2 mt-2 text-xs border-t border-slate-200 text-slate-500">
+                          <span>Was this helpful?</span>
+                          <button
+                            type="button"
+                            onClick={() => handleWidgetFeedback(index, "helpful")}
+                            className={classNames(
+                              "rounded border px-2 py-1",
+                              message.feedback === "helpful" ? "border-slate-400 bg-slate-100 text-slate-900" : "border-slate-200"
+                            )}
+                          >
+                            👍 Yes
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleWidgetFeedback(index, "not_helpful")}
+                            className={classNames(
+                              "rounded border px-2 py-1",
+                              message.feedback === "not_helpful" ? "border-slate-400 bg-slate-100 text-slate-900" : "border-slate-200"
+                            )}
+                          >
+                            👎 No
+                          </button>
+                        </div>
+                      )}
                     </div>
                   ))}
+                  {loading.widgetTest && (
+                    <div className="flex w-16 items-center justify-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-3 shadow-sm" aria-label="Assistant is typing">
+                      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400" />
+                      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400 [animation-delay:150ms]" />
+                      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400 [animation-delay:300ms]" />
+                    </div>
+                  )}
                 </div>
                 <form className="flex gap-2 p-3 bg-white border-t border-slate-200" onSubmit={handleWidgetTestChat}>
                   <input
@@ -1218,7 +1366,7 @@ ${widgetScriptSrc()}`;
                     style={{ backgroundColor: widgetThemeForm.sendButtonColor }}
                     disabled={loading.widgetTest}
                   >
-                    {loading.widgetTest ? "..." : "Send"}
+                    {loading.widgetTest ? <Loader2 className="animate-spin" size={16} /> : <Send size={16} />}
                   </button>
                 </form>
               </div>
@@ -2223,6 +2371,17 @@ ${widgetScriptSrc()}`;
                       <h2 className="font-semibold text-slate-950">Documents</h2>
                     </div>
                     <div className="flex gap-2">
+                      {selectedDocumentIds.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={handleBulkDeleteDocuments}
+                          disabled={loading.documents}
+                          className="inline-flex items-center justify-center gap-2 px-3 text-sm font-semibold transition bg-white border rounded shadow-sm h-9 border-rose-200 text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          <Trash2 size={16} />
+                          Delete selected ({selectedDocumentIds.length})
+                        </button>
+                      )}
                       <IconButton title="Refresh documents" onClick={() => loadDocuments()}>
                         <RefreshCcw size={16} />
                       </IconButton>
@@ -2283,6 +2442,15 @@ ${widgetScriptSrc()}`;
                     <table className="min-w-full text-sm divide-y divide-slate-200">
                       <thead className="text-xs font-semibold tracking-wide text-left uppercase bg-slate-50 text-slate-500">
                         <tr>
+                          <th className="w-12 px-4 py-3">
+                            <input
+                              type="checkbox"
+                              aria-label="Select all documents"
+                              checked={documents.length > 0 && selectedDocumentIds.length === documents.length}
+                              onChange={toggleAllDocuments}
+                              className="w-4 h-4 rounded border-slate-300"
+                            />
+                          </th>
                           <th className="px-4 py-3">File</th>
                           <th className="px-4 py-3">Status</th>
                           <th className="px-4 py-3">Chunks</th>
@@ -2293,13 +2461,22 @@ ${widgetScriptSrc()}`;
                       <tbody className="divide-y divide-slate-100">
                         {documents.length === 0 ? (
                           <tr>
-                            <td className="px-4 py-8 text-center text-slate-500" colSpan={5}>
+                            <td className="px-4 py-8 text-center text-slate-500" colSpan={6}>
                               No documents uploaded.
                             </td>
                           </tr>
                         ) : (
                           documents.map((document) => (
                             <tr key={document._id}>
+                              <td className="w-12 px-4 py-3">
+                                <input
+                                  type="checkbox"
+                                  aria-label={`Select ${document.originalName}`}
+                                  checked={selectedDocumentIds.includes(document._id)}
+                                  onChange={() => toggleDocumentSelection(document._id)}
+                                  className="w-4 h-4 rounded border-slate-300"
+                                />
+                              </td>
                               <td className="max-w-[320px] px-4 py-3">
                                 <div className="font-medium truncate text-slate-900">{document.originalName}</div>
                                 {document.indexError && (
@@ -2368,7 +2545,24 @@ ${widgetScriptSrc()}`;
                       <div className="mb-2 text-xs font-semibold tracking-wide uppercase text-slate-500">
                         Answer
                       </div>
-                      <p className="text-sm leading-6 whitespace-pre-wrap text-slate-800">{chatResult.answer}</p>
+                      <div className="text-slate-800"><FormattedAnswer text={chatResult.answer} /></div>
+                      <div className="flex items-center gap-2 mt-4 text-xs text-slate-500">
+                        <span>Was this helpful?</span>
+                        <button
+                          type="button"
+                          onClick={() => handleChatFeedback("helpful")}
+                          className={classNames("rounded border px-2 py-1", chatResult.feedback === "helpful" ? "border-slate-400 bg-slate-100" : "border-slate-200")}
+                        >
+                          👍 Helpful
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleChatFeedback("not_helpful")}
+                          className={classNames("rounded border px-2 py-1", chatResult.feedback === "not_helpful" ? "border-slate-400 bg-slate-100" : "border-slate-200")}
+                        >
+                          👎 Not helpful
+                        </button>
+                      </div>
                       <div className="mt-4 text-xs text-slate-500">Session: {chatResult.sessionId}</div>
                       <div className="mt-4 space-y-2">
                         {(chatResult.sources || []).map((source, index) => (

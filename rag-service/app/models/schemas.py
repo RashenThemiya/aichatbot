@@ -6,6 +6,9 @@ class IngestRequest(BaseModel):
     document_id: str = Field(..., description="Unique document identifier")
     file_path: str = Field(..., description="Absolute path to the PDF file")
     document_name: str = Field(default="", description="Original filename")
+    document_version: str = "1"
+    effective_date: str = ""
+    is_active: bool = True
 
 
 class DeleteDocumentRequest(BaseModel):
@@ -17,6 +20,7 @@ class QueryRequest(BaseModel):
     company_id: str
     question: str
     top_k: int | None = None
+    history: list[str] = Field(default_factory=list)
 
 
 class SourceChunk(BaseModel):
@@ -24,6 +28,7 @@ class SourceChunk(BaseModel):
     document_name: str
     content: str
     score: float
+    page_number: int | None = None
 
 
 class QueryResponse(BaseModel):

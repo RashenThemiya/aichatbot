@@ -171,6 +171,12 @@ export const api = {
       request(`/api/companies/${companyId}/documents/${documentId}`, {
         method: "DELETE",
       }),
+    removeBulk: (companyId, documentIds) =>
+      request(`/api/companies/${companyId}/documents/bulk`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ documentIds }),
+      }),
   },
   chat: {
     ask: (companyId, payload) =>
@@ -178,6 +184,12 @@ export const api = {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
+      }),
+    feedback: (companyId, conversationId, feedback) =>
+      request(`/api/companies/${companyId}/chat/feedback`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ conversationId, feedback }),
       }),
     conversations: (companyId, search = "") => {
       const query = search ? `?search=${encodeURIComponent(search)}` : "";

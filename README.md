@@ -74,6 +74,19 @@ pip install -r requirements.txt
 copy .env.example .env
 ```
 
+Install the free Tesseract OCR executable separately. On Windows, install
+Tesseract and either add its installation directory to `PATH` or set:
+
+```env
+TESSERACT_CMD=C:\Program Files\Tesseract-OCR\tesseract.exe
+```
+
+On Ubuntu/Debian:
+
+```bash
+sudo apt-get install tesseract-ocr
+```
+
 Set your OpenAI key in `rag-service/.env`.
 
 Start the RAG service:
@@ -165,9 +178,39 @@ Add these values to `rag-service/.env`.
 | `OPENAI_EMBEDDING_MODEL` | `text-embedding-3-small` | Embeddings model |
 | `OPENAI_CHAT_MODEL` | `gpt-4o-mini` | Chat model |
 | `CHROMA_PERSIST_DIR` | `./chroma_data` | Vector DB path |
-| `CHUNK_SIZE` | `1000` | Characters per chunk |
-| `CHUNK_OVERLAP` | `200` | Overlap between chunks |
-| `TOP_K` | `5` | Retrieved chunks per query |
+| `CHUNK_SIZE` | `600` | Characters per chunk |
+| `CHUNK_OVERLAP` | `150` | Overlap between chunks |
+| `TOP_K` | `6` | Final chunks supplied to the answer model |
+| `RETRIEVAL_CANDIDATES` | `24` | Hybrid-search candidates considered before reranking |
+| `MINIMUM_RELEVANCE_SCORE` | `0.25` | Rejects weak retrieval results |
+| `ENABLE_RERANKING` | `true` | Reranks retrieved chunks before answering |
+| `ENABLE_ANSWER_VERIFICATION` | `true` | Removes answer claims unsupported by retrieved PDF text |
+| `CONVERSATION_HISTORY_MESSAGES` | `6` | Recent messages used to resolve follow-up questions |
+| `NEIGHBOR_CHUNKS` | `1` | Adjacent chunks attached around every retrieved match |
+| `ENABLE_MULTILINGUAL_SEARCH` | `true` | Searches both the original question and English translation |
+| `ENABLE_LOCAL_CROSS_ENCODER` | `false` | Uses the optional dedicated local reranker |
+| `CROSS_ENCODER_MODEL` | `cross-encoder/ms-marco-MiniLM-L-6-v2` | Local reranking model |
+| `ENABLE_LOCAL_OCR` | `true` | Uses free local Tesseract OCR on low-text pages |
+| `OCR_MIN_PAGE_CHARACTERS` | `80` | Runs OCR when extracted page text is shorter than this |
+| `OCR_DPI` | `300` | Resolution used to render pages for OCR |
+| `OCR_LANGUAGE` | `eng` | Installed Tesseract language code or codes, such as `eng+sin` |
+| `TESSERACT_CMD` | empty | Optional full path to the Tesseract executable |
+| `DESCRIBE_PDF_IMAGES` | `false` | Enables paid model-based image and diagram descriptions |
+
+Install the optional local cross-encoder with:
+
+```bash
+pip install -r requirements-reranker.txt
+```
+
+Then set `ENABLE_LOCAL_CROSS_ENCODER=true`. The first start downloads the
+configured model and requires additional memory.
+
+Run the accuracy evaluation after replacing the example cases:
+
+```bash
+python evaluation/run_evaluation.py evaluation/questions.example.jsonl
+```
 
 ## Web chat widget identity and history
 

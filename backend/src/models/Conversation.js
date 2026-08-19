@@ -18,9 +18,15 @@ const messageSchema = new mongoose.Schema(
           documentName: String,
           content: String,
           score: Number,
+          pageNumber: Number,
         },
       ],
       default: [],
+    },
+    feedback: {
+      type: String,
+      enum: ["helpful", "not_helpful", ""],
+      default: "",
     },
   },
   { _id: false }

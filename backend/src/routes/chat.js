@@ -21,6 +21,7 @@ function isAllowedWidgetRoute(req) {
   if (!isWidgetRequest(req)) return true;
 
   if (req.method === "POST" && req.path === "/") return true;
+  if (req.method === "POST" && req.path === "/feedback") return true;
   if (req.method === "POST" && req.path === "/auth/google") return true;
   if (req.method === "POST" && req.path === "/auth/external") return true;
   if (req.method === "GET" && req.path.startsWith("/history/")) return true;
@@ -132,6 +133,7 @@ function mapSources(ragSources = []) {
     documentName: source.document_name,
     content: source.content,
     score: source.score,
+    pageNumber: source.page_number,
   }));
 }
 
@@ -347,6 +349,10 @@ router.post("/", async (req, res) => {
     const ragResult = await ragClient.queryKnowledge({
       companyId: company._id.toString(),
       question: preprocessed.question,
+      history: conversation.messages
+        .slice(0, -1)
+        .slice(-6)
+        .map((item) => `${item.role}: ${item.content}`),
     });
 
     const sources = mapSources(ragResult.sources || []);
@@ -371,6 +377,35 @@ router.post("/", async (req, res) => {
     res.status(err.statusCode || err.response?.status || 500).json({
       error: detail,
     });
+  }
+});
+
+router.post("/feedback", async (req, res) => {
+  try {
+    const company = await getCompanyOrFail(req.params.companyId);
+    await ensureWidgetAccess(req, company);
+    const { conversationId, feedback } = req.body;
+    if (!["helpful", "not_helpful"].includes(feedback)) {
+      return res.status(400).json({ error: "Invalid feedback value" });
+    }
+    const conversation = await Conversation.findOne({
+      _id: conversationId,
+      companyId: company._id,
+    });
+    if (!conversation) {
+      return res.status(404).json({ error: "Conversation not found" });
+    }
+    const assistantMessage = [...conversation.messages]
+      .reverse()
+      .find((message) => message.role === "assistant");
+    if (!assistantMessage) {
+      return res.status(404).json({ error: "Assistant message not found" });
+    }
+    assistantMessage.feedback = feedback;
+    await conversation.save();
+    res.json({ success: true, feedback });
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ error: err.message });
   }
 });
 

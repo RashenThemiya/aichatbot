@@ -56,7 +56,12 @@ async function ensureCompany(companyId) {
   return Company.findById(companyId);
 }
 
-async function createAndIndexDocument(company, file, originalName = file.originalname) {
+async function createAndIndexDocument(
+  company,
+  file,
+  originalName = file.originalname,
+  metadata = {}
+) {
   const doc = await Document.create({
     companyId: company._id,
     originalName,
@@ -65,6 +70,9 @@ async function createAndIndexDocument(company, file, originalName = file.origina
     mimeType: file.mimetype,
     fileSize: file.size,
     status: "indexing",
+    documentVersion: metadata.documentVersion || "1",
+    effectiveDate: metadata.effectiveDate || null,
+    isActive: metadata.isActive !== false && metadata.isActive !== "false",
   });
 
   try {
@@ -73,6 +81,9 @@ async function createAndIndexDocument(company, file, originalName = file.origina
       documentId: doc._id.toString(),
       filePath: doc.filePath,
       documentName: doc.originalName,
+      documentVersion: doc.documentVersion,
+      effectiveDate: doc.effectiveDate?.toISOString() || "",
+      isActive: doc.isActive,
     });
 
     doc.status = "indexed";
@@ -119,7 +130,16 @@ router.post(
     const results = [];
     for (const [index, file] of files.entries()) {
       const relativeName = normalizeRelativeName(relativePaths[index]);
-      results.push(await createAndIndexDocument(company, file, relativeName || file.originalname));
+      results.push(await createAndIndexDocument(
+        company,
+        file,
+        relativeName || file.originalname,
+        {
+          documentVersion: req.body.documentVersion,
+          effectiveDate: req.body.effectiveDate,
+          isActive: req.body.isActive,
+        }
+      ));
     }
 
     const failed = results.filter((result) => !result.ok);
@@ -179,6 +199,53 @@ router.get("/:documentId", async (req, res) => {
   }
 });
 
+router.delete("/bulk", async (req, res) => {
+  try {
+    const documentIds = Array.from(new Set(
+      (Array.isArray(req.body.documentIds) ? req.body.documentIds : [])
+        .map((id) => String(id || "").trim())
+        .filter(Boolean)
+    ));
+    if (documentIds.length === 0) {
+      return res.status(400).json({ error: "At least one document ID is required" });
+    }
+    if (documentIds.length > 200) {
+      return res.status(400).json({ error: "A maximum of 200 documents can be deleted at once" });
+    }
+
+    const documents = await Document.find({
+      _id: { $in: documentIds },
+      companyId: req.params.companyId,
+    });
+
+    for (const doc of documents) {
+      try {
+        await ragClient.deleteDocumentVectors({
+          companyId: req.params.companyId,
+          documentId: doc._id.toString(),
+        });
+      } catch (ragErr) {
+        console.warn(`RAG delete warning for ${doc._id}:`, ragErr.message);
+      }
+      if (fs.existsSync(doc.filePath)) {
+        fs.unlinkSync(doc.filePath);
+      }
+    }
+
+    await Document.deleteMany({
+      _id: { $in: documents.map((doc) => doc._id) },
+      companyId: req.params.companyId,
+    });
+
+    res.json({
+      message: `${documents.length} document${documents.length === 1 ? "" : "s"} deleted`,
+      deletedCount: documents.length,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.delete("/:documentId", async (req, res) => {
   try {
     const doc = await Document.findOne({
@@ -232,6 +299,9 @@ router.post("/:documentId/reindex", async (req, res) => {
         documentId: doc._id.toString(),
         filePath: doc.filePath,
         documentName: doc.originalName,
+        documentVersion: doc.documentVersion,
+        effectiveDate: doc.effectiveDate?.toISOString() || "",
+        isActive: doc.isActive,
       });
 
       doc.status = "indexed";

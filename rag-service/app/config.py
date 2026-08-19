@@ -9,10 +9,24 @@ class Settings(BaseSettings):
     chunk_size: int = 600
     chunk_overlap: int = 150
     top_k: int = 6
+    retrieval_candidates: int = 40
+    minimum_relevance_score: float = 0.25
+    enable_reranking: bool = True
+    enable_answer_verification: bool = True
+    conversation_history_messages: int = 6
+    neighbor_chunks: int = 1
+    enable_multilingual_search: bool = True
+    enable_local_cross_encoder: bool = False
+    cross_encoder_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
     rag_service_port: int = 8000
     openai_vision_model: str = "gpt-4o-mini"
-    describe_pdf_images: bool = True
+    describe_pdf_images: bool = False
     min_image_size: int = 80  # px, skips tiny icons/bullets from triggering vision calls
+    enable_local_ocr: bool = True
+    ocr_min_page_characters: int = 80
+    ocr_dpi: int = 300
+    ocr_language: str = "eng"
+    tesseract_cmd: str = ""
 
     class Config:
         env_file = ".env"
