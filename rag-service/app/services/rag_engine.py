@@ -1,8 +1,10 @@
+import re
+
 from openai import OpenAI
 from time import perf_counter
 
 from app.config import settings
-from app.models.schemas import QueryDiagnostics, QueryResponse, SourceChunk
+from app.models.schemas import ClarificationSuggestion, QueryResponse, SourceChunk
 from app.services.chroma_store import ChromaStore
 from app.services.pdf_processor import chunk_pages, extract_pages_from_pdf
 
@@ -12,7 +14,7 @@ Rules:
 - The context may use different wording, synonyms, or phrasing than the question. Match on MEANING, not exact words — if the context answers the question in different terms, use it.
 - Do not invent facts that aren't supported by the context, but do paraphrase and combine information across the given sources to answer fully.
 - Cite supporting sources inline using their labels, for example [Source 1]. Never cite a source that does not support the statement.
-- Only say "I don't have that information in the available documents. Please contact support for further help." if the context truly contains nothing relevant to the question.
+- When the context does not support an answer, ask one concise clarification question. Do not claim that the customer must contact support.
 - Do NOT handle orders, bookings, payments, or transactions. If asked, politely explain you can only help with support questions from the knowledge base.
 - If troubleshooting steps are in the context, list them in order.
 
@@ -203,14 +205,11 @@ class RAGEngine:
         
 
         if not retrieved:
-            timings["total"] = int((perf_counter() - query_started) * 1000)
+            suggestions = self._clarification_suggestions(question, candidates)
             return QueryResponse(
-                answer="I couldn't find relevant information in the available documents. Please contact support for further help.",
+                answer=self._clarification_answer(suggestions),
                 sources=[],
-                diagnostics=QueryDiagnostics(
-                    timings_ms=timings,
-                    retrieval=retrieval_stats,
-                ),
+                suggestions=suggestions,
             )
 
         context_blocks = []
@@ -249,7 +248,13 @@ class RAGEngine:
         answer = response.choices[0].message.content or ""
         started = perf_counter()
         answer = self._verify_answer(standalone_question, context, answer)
-        mark("answer_verification", started)
+        if self._is_unsupported_answer(answer):
+            suggestions = self._clarification_suggestions(question, candidates)
+            return QueryResponse(
+                answer=self._clarification_answer(suggestions),
+                sources=[],
+                suggestions=suggestions,
+            )
         sources = [
             SourceChunk(
                 document_id=c["document_id"],
@@ -269,6 +274,70 @@ class RAGEngine:
                 timings_ms=timings,
                 retrieval=retrieval_stats,
             ),
+        )
+
+    @staticmethod
+    def _is_unsupported_answer(answer: str) -> bool:
+        normalized = " ".join(answer.lower().split())
+        unsupported_phrases = (
+            "i couldn't find relevant information",
+            "i could not find relevant information",
+            "not available in the documents",
+        )
+        return bool(re.search(r"\bi (?:don't|do not) have\b", normalized)) or any(
+            phrase in normalized for phrase in unsupported_phrases
+        )
+
+    def _clarification_suggestions(
+        self, question: str, candidates: list[dict]
+    ) -> list[ClarificationSuggestion]:
+        """Turn weak retrieval matches into safe, clickable follow-up searches."""
+        suggestions = []
+        seen = set()
+        key_terms = {
+            term.lower()
+            for term in re.findall(r"[A-Za-z0-9-]+", question)
+            if len(term) >= 5 or any(char.isdigit() for char in term)
+        }
+        for chunk in candidates:
+            content = " ".join(chunk.get("content", "").split())
+            if not content:
+                continue
+            document_name = chunk.get("document_name") or "Related document"
+            candidate_text = f"{document_name} {content}".lower()
+            if key_terms and not any(term in candidate_text for term in key_terms):
+                continue
+            page = chunk.get("page_number")
+            excerpt = content[:180].rsplit(" ", 1)[0].strip() or content[:180]
+            page_suffix = f" (page {page})" if page else ""
+            label = f"{document_name}{page_suffix}: {excerpt}"
+            if label.casefold() in seen:
+                continue
+            seen.add(label.casefold())
+            suggestions.append(
+                ClarificationSuggestion(
+                    label=label,
+                    message=(
+                        "Regarding my earlier question, I mean this related information: "
+                        f"{excerpt}. Please answer the original question only if this "
+                        "document text supports it."
+                    ),
+                )
+            )
+            if len(suggestions) == 3:
+                break
+        return suggestions
+
+    @staticmethod
+    def _clarification_answer(suggestions: list[ClarificationSuggestion]) -> str:
+        if suggestions:
+            return (
+                "I couldn't verify an answer from the documents yet. "
+                "Please choose the closest related topic below, or add a little more detail."
+            )
+        return (
+            "I couldn't verify that from the indexed documents. Please provide the "
+            "product model, a related document name, or another detail so I can search again."
         )
 
     def _standalone_question(self, question: str, history: list[str]) -> str:
@@ -311,9 +380,8 @@ class RAGEngine:
                         "[Source N] citations and do not add outside knowledge. If the "
                         "draft asks concise clarification questions and makes no product "
                         "claims, preserve those questions. Otherwise, if the context does "
-                        "not answer the question, return exactly: "
-                        "\"I don't have that information in the available documents. "
-                        "Please contact support for further help.\"\n\n"
+                        "not answer the question, ask the customer for the smallest useful "
+                        "detail needed to identify the right product or document section.\n\n"
                         f"Question:\n{question}\n\nContext:\n{context}\n\n"
                         f"Draft answer:\n{answer}\n\nVerified answer:"
                     ),

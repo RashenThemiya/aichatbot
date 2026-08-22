@@ -31,15 +31,15 @@ class SourceChunk(BaseModel):
     page_number: int | None = None
 
 
-class QueryDiagnostics(BaseModel):
-    timings_ms: dict[str, int] = Field(default_factory=dict)
-    retrieval: dict[str, int | bool] = Field(default_factory=dict)
+class ClarificationSuggestion(BaseModel):
+    label: str
+    message: str
 
 
 class QueryResponse(BaseModel):
     answer: str
     sources: list[SourceChunk]
-    diagnostics: QueryDiagnostics | None = None
+    suggestions: list[ClarificationSuggestion] = Field(default_factory=list)
 
 
 class IngestResponse(BaseModel):
