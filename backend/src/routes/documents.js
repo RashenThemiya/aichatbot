@@ -199,6 +199,34 @@ router.get("/:documentId", async (req, res) => {
   }
 });
 
+router.delete("/all", async (req, res) => {
+  try {
+    const documents = await Document.find({ companyId: req.params.companyId });
+
+    for (const doc of documents) {
+      try {
+        await ragClient.deleteDocumentVectors({
+          companyId: req.params.companyId,
+          documentId: doc._id.toString(),
+        });
+      } catch (ragErr) {
+        console.warn(`RAG delete warning for ${doc._id}:`, ragErr.message);
+      }
+      if (fs.existsSync(doc.filePath)) {
+        fs.unlinkSync(doc.filePath);
+      }
+    }
+
+    await Document.deleteMany({ companyId: req.params.companyId });
+    res.json({
+      message: `${documents.length} document${documents.length === 1 ? "" : "s"} deleted`,
+      deletedCount: documents.length,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.delete("/bulk", async (req, res) => {
   try {
     const documentIds = Array.from(new Set(
@@ -209,10 +237,6 @@ router.delete("/bulk", async (req, res) => {
     if (documentIds.length === 0) {
       return res.status(400).json({ error: "At least one document ID is required" });
     }
-    if (documentIds.length > 200) {
-      return res.status(400).json({ error: "A maximum of 200 documents can be deleted at once" });
-    }
-
     const documents = await Document.find({
       _id: { $in: documentIds },
       companyId: req.params.companyId,

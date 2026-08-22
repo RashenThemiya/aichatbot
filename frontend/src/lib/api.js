@@ -177,6 +177,10 @@ export const api = {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ documentIds }),
       }),
+    removeAll: (companyId) =>
+      request(`/api/companies/${companyId}/documents/all`, {
+        method: "DELETE",
+      }),
   },
   chat: {
     ask: (companyId, payload) =>

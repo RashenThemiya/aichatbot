@@ -36,10 +36,16 @@ class ClarificationSuggestion(BaseModel):
     message: str
 
 
+class QueryDiagnostics(BaseModel):
+    timings_ms: dict[str, int] = Field(default_factory=dict)
+    retrieval: dict[str, int | bool | str] = Field(default_factory=dict)
+
+
 class QueryResponse(BaseModel):
     answer: str
     sources: list[SourceChunk]
     suggestions: list[ClarificationSuggestion] = Field(default_factory=list)
+    diagnostics: QueryDiagnostics | None = None
 
 
 class IngestResponse(BaseModel):

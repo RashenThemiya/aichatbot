@@ -1,10 +1,16 @@
+import json
 import re
 
 from openai import OpenAI
 from time import perf_counter
 
 from app.config import settings
-from app.models.schemas import ClarificationSuggestion, QueryResponse, SourceChunk
+from app.models.schemas import (
+    ClarificationSuggestion,
+    QueryDiagnostics,
+    QueryResponse,
+    SourceChunk,
+)
 from app.services.chroma_store import ChromaStore
 from app.services.pdf_processor import chunk_pages, extract_pages_from_pdf
 
@@ -17,6 +23,8 @@ Rules:
 - When the context does not support an answer, ask one concise clarification question. Do not claim that the customer must contact support.
 - Do NOT handle orders, bookings, payments, or transactions. If asked, politely explain you can only help with support questions from the knowledge base.
 - If troubleshooting steps are in the context, list them in order.
+- Adapt the response to the request type: answer factual questions directly, compare named products side by side, recommend from stated needs and constraints, and provide ordered diagnosis for troubleshooting.
+- For scenario questions, explicitly connect each recommendation or instruction to the customer's stated conditions.
 
 Product recommendation behavior:
 - First identify every product in the supplied context that plausibly matches the customer's words. Treat model names, product codes, aliases, and close spelling variations as product identifiers.
@@ -100,6 +108,83 @@ class RAGEngine:
         except Exception:
             pass
         return [question]
+
+    def _analyze_request(self, question: str, history: list[str]) -> dict:
+        """Understand intent and decide whether one clarification is necessary."""
+        recent = history[-settings.conversation_history_messages:]
+        conversation = "\n".join(recent) or "(no earlier messages)"
+        try:
+            response = self.openai.chat.completions.create(
+                model=settings.openai_chat_model,
+                messages=[{
+                    "role": "user",
+                    "content": (
+                        "Analyze this customer-support request using the conversation. Return one "
+                        "JSON object with exactly these fields: intent, scenario_summary, sufficient, "
+                        "clarification_question, clarification_options, no_more_information. Intent "
+                        "must be one of factual, recommendation, "
+                        "comparison, troubleshooting, or unclear. scenario_summary must combine all "
+                        "known product names, use case, symptoms, conditions, numbers, compatibility "
+                        "requirements, preferences, and hard constraints without inventing anything. "
+                        "For a clear factual question or comparison of named products, sufficient is "
+                        "true. For recommendations and troubleshooting, set sufficient false only when "
+                        "one missing detail could materially change the answer or make guidance unsafe. "
+                        "Never ask again for information already present in the conversation. If "
+                        "sufficient is false, clarification_question must ask only the smallest useful "
+                        "question, in the customer's language, and may contain at most 3 short questions. "
+                        "Otherwise clarification_question must be an empty string. "
+                        "clarification_options must be an array of up to 3 short objects containing "
+                        "label and message. Include options only when they are plausible interpretations "
+                        "of the customer's own wording; never invent products, specifications, or facts. "
+                        "For example, 'SP with 48V lithium' can offer a confirmation of single-phase, "
+                        "48 V lithium battery. Set no_more_information true only when the latest customer "
+                        "message explicitly says none of the choices match and provides no new useful "
+                        "detail. Otherwise it must be false. Do not answer the customer and do not "
+                        "include markdown.\n\n"
+                        f"Conversation:\n{conversation}\n"
+                        f"Latest customer message:\n{question}"
+                    ),
+                }],
+                temperature=0,
+                max_tokens=350,
+                response_format={"type": "json_object"},
+            )
+            parsed = json.loads(response.choices[0].message.content or "{}")
+            intent = parsed.get("intent", "unclear")
+            if intent not in {
+                "factual", "recommendation", "comparison", "troubleshooting", "unclear"
+            }:
+                intent = "unclear"
+            sufficient = bool(parsed.get("sufficient", True))
+            clarification = str(parsed.get("clarification_question") or "").strip()
+            options = []
+            for option in parsed.get("clarification_options") or []:
+                if not isinstance(option, dict):
+                    continue
+                label = str(option.get("label") or "").strip()
+                message = str(option.get("message") or "").strip()
+                if label and message:
+                    options.append({"label": label[:120], "message": message[:500]})
+                if len(options) == 3:
+                    break
+            return {
+                "intent": intent,
+                "scenario_summary": str(parsed.get("scenario_summary") or "").strip(),
+                "sufficient": sufficient or not clarification,
+                "clarification_question": clarification,
+                "clarification_options": options,
+                "no_more_information": bool(parsed.get("no_more_information", False)),
+            }
+        except Exception:
+            # Conversation analysis should improve answers, never prevent retrieval.
+            return {
+                "intent": "unclear",
+                "scenario_summary": "",
+                "sufficient": True,
+                "clarification_question": "",
+                "clarification_options": [],
+                "no_more_information": False,
+            }
     
     def ingest(
         self,
@@ -136,7 +221,7 @@ class RAGEngine:
     ) -> QueryResponse:
         query_started = perf_counter()
         timings: dict[str, int] = {}
-        retrieval_stats: dict[str, int | bool] = {}
+        retrieval_stats: dict[str, int | bool | str] = {}
 
         def mark(name: str, started: float) -> None:
             timings[name] = int((perf_counter() - started) * 1000)
@@ -160,8 +245,69 @@ class RAGEngine:
             )
         mark("document_check", started)
 
+        if question.strip().casefold() == (
+            "none of these choices match, and i do not have more information."
+        ):
+            timings["total"] = int((perf_counter() - query_started) * 1000)
+            return QueryResponse(
+                answer=(
+                    "I don't have enough information in your question to identify the "
+                    "correct product or guidance."
+                ),
+                sources=[],
+                diagnostics=QueryDiagnostics(
+                    timings_ms=timings,
+                    retrieval=retrieval_stats,
+                ),
+            )
+
+        started = perf_counter()
+        request_analysis = self._analyze_request(question, history or [])
+        mark("request_analysis", started)
+        retrieval_stats["intent"] = request_analysis["intent"]
+        if request_analysis["no_more_information"]:
+            timings["total"] = int((perf_counter() - query_started) * 1000)
+            return QueryResponse(
+                answer=(
+                    "I don't have enough information in your question to identify the "
+                    "correct product or guidance."
+                ),
+                sources=[],
+                diagnostics=QueryDiagnostics(
+                    timings_ms=timings,
+                    retrieval=retrieval_stats,
+                ),
+            )
+        if not request_analysis["sufficient"]:
+            suggestions = [
+                ClarificationSuggestion(label=option["label"], message=option["message"])
+                for option in request_analysis["clarification_options"]
+            ]
+            if suggestions:
+                suggestions.append(
+                    ClarificationSuggestion(
+                        label="None of these",
+                        message="None of these choices match, and I do not have more information.",
+                    )
+                )
+            timings["total"] = int((perf_counter() - query_started) * 1000)
+            return QueryResponse(
+                answer=request_analysis["clarification_question"],
+                sources=[],
+                suggestions=suggestions,
+                diagnostics=QueryDiagnostics(
+                    timings_ms=timings,
+                    retrieval=retrieval_stats,
+                ),
+            )
+
         started = perf_counter()
         standalone_question = self._standalone_question(question, history or [])
+        if request_analysis["scenario_summary"]:
+            standalone_question = (
+                f"{standalone_question}\nCustomer scenario and constraints: "
+                f"{request_analysis['scenario_summary']}"
+            )
         mark("standalone_question", started)
 
         started = perf_counter()

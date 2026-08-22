@@ -1010,29 +1010,62 @@ ${widgetScriptSrc()}`;
     setUploadProgress({ current: 1, total: files.length, fileName: files[0].name });
 
     const failures = [];
-    let completed = 0;
+    let uploaded = 0;
+    let reindexed = 0;
+    let skipped = 0;
 
     try {
+      // Match by the same relative path stored by the backend. This makes
+      // selecting the same folder a safe resume operation instead of creating
+      // duplicate document records.
+      const currentDocuments = await api.documents.list(selectedCompany._id);
+      const normalizeDocumentName = (value) => String(value || "")
+        .replace(/\\/g, "/")
+        .split("/")
+        .filter((part) => part && part !== "." && part !== "..")
+        .join("/");
+      const documentsByName = new Map();
+      const statusPriority = { indexed: 3, indexing: 2, failed: 1 };
+      for (const document of currentDocuments) {
+        const name = normalizeDocumentName(document.originalName);
+        const existing = documentsByName.get(name);
+        if (
+          !existing
+          || (statusPriority[document.status] || 0) > (statusPriority[existing.status] || 0)
+        ) {
+          documentsByName.set(name, document);
+        }
+      }
+
       for (const [index, file] of files.entries()) {
-        setUploadProgress({ current: index + 1, total: files.length, fileName: file.name });
+        const relativeName = normalizeDocumentName(file.webkitRelativePath || file.name);
+        const existing = documentsByName.get(relativeName);
+        setUploadProgress({ current: index + 1, total: files.length, fileName: relativeName });
         try {
-          await api.documents.upload(selectedCompany._id, [file]);
-          completed += 1;
+          if (existing?.status === "indexed" || existing?.status === "indexing") {
+            skipped += 1;
+          } else if (existing?.status === "failed") {
+            await api.documents.reindex(selectedCompany._id, existing._id);
+            reindexed += 1;
+          } else {
+            await api.documents.upload(selectedCompany._id, [file]);
+            uploaded += 1;
+          }
         } catch (err) {
-          console.error("[task] error upload", file.name, err);
-          failures.push({ fileName: file.name, message: err.message || "Upload failed" });
+          console.error("[task] error upload or reindex", relativeName, err);
+          failures.push({ fileName: relativeName, message: err.message || "Indexing failed" });
         }
       }
 
       const refreshedDocuments = await api.documents.list(selectedCompany._id);
       setDocuments(refreshedDocuments);
 
-      if (completed > 0) {
-        setNotice(
-          completed === 1
-            ? "1 document uploaded and indexed successfully"
-            : `${completed} documents uploaded and indexed successfully`
-        );
+      const successParts = [];
+      if (uploaded) successParts.push(`${uploaded} new document${uploaded === 1 ? "" : "s"} uploaded`);
+      if (reindexed) successParts.push(`${reindexed} failed document${reindexed === 1 ? "" : "s"} reindexed`);
+      if (skipped) successParts.push(`${skipped} indexed document${skipped === 1 ? "" : "s"} skipped`);
+      if (successParts.length > 0) {
+        setNotice(successParts.join(", "));
       }
       if (failures.length > 0) {
         const failedNames = failures.map(({ fileName }) => fileName).join(", ");
@@ -1121,6 +1154,23 @@ ${widgetScriptSrc()}`;
       "documents",
       () => api.documents.removeBulk(selectedCompany._id, selectedDocumentIds),
       `${count} document${count === 1 ? "" : "s"} deleted`
+    );
+    if (result) {
+      setSelectedDocumentIds([]);
+      await loadDocuments();
+    }
+  }
+
+  async function handleDeleteAllDocuments() {
+    if (!selectedCompany || documents.length === 0) return;
+    const ok = window.confirm(
+      `Permanently delete all ${documents.length} PDFs for ${selectedCompany.name} and their vectors? This cannot be undone.`
+    );
+    if (!ok) return;
+    const result = await runTask(
+      "documents",
+      () => api.documents.removeAll(selectedCompany._id),
+      "All documents deleted"
     );
     if (result) {
       setSelectedDocumentIds([]);
@@ -2435,6 +2485,17 @@ ${widgetScriptSrc()}`;
                       <h2 className="font-semibold text-slate-950">Documents</h2>
                     </div>
                     <div className="flex gap-2">
+                      {documents.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={handleDeleteAllDocuments}
+                          disabled={loading.documents}
+                          className="inline-flex items-center justify-center gap-2 px-3 text-sm font-semibold transition bg-white border rounded shadow-sm h-9 border-rose-300 text-rose-800 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          <Trash2 size={16} />
+                          Delete all ({documents.length})
+                        </button>
+                      )}
                       {selectedDocumentIds.length > 0 && (
                         <button
                           type="button"
