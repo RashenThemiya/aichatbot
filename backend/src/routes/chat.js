@@ -137,6 +137,10 @@ function mapSources(ragSources = []) {
   }));
 }
 
+function nowMs() {
+  return Number(process.hrtime.bigint() / 1000000n);
+}
+
 function escapeRegex(value) {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -281,6 +285,8 @@ router.post("/auth/external", async (req, res) => {
 
 router.post("/", async (req, res) => {
   try {
+    const requestStarted = nowMs();
+    const timingsMs = {};
     const company = await getCompanyOrFail(req.params.companyId);
 
     await ensureWidgetAccess(req, company);
@@ -329,7 +335,9 @@ router.post("/", async (req, res) => {
     const originalMessage = message.trim();
     conversation.messages.push({ role: "user", content: originalMessage });
 
+    const preprocessStarted = nowMs();
     const preprocessed = await preprocessUserMessage(originalMessage);
+    timingsMs.preprocessing = nowMs() - preprocessStarted;
 
     if (preprocessed.type === "small_talk") {
       conversation.messages.push({
@@ -338,14 +346,20 @@ router.post("/", async (req, res) => {
       });
       await conversation.save();
 
+      timingsMs.total = nowMs() - requestStarted;
       return res.json({
         sessionId: sid,
         answer: preprocessed.reply,
         sources: [],
         conversationId: conversation._id,
+        diagnostics: {
+          timingsMs,
+          cache: { hit: false },
+        },
       });
     }
 
+    const ragStarted = nowMs();
     const ragResult = await ragClient.queryKnowledge({
       companyId: company._id.toString(),
       question: preprocessed.question,
@@ -354,13 +368,26 @@ router.post("/", async (req, res) => {
         .slice(-6)
         .map((item) => `${item.role}: ${item.content}`),
     });
+    timingsMs.ragService = nowMs() - ragStarted;
 
     const sources = mapSources(ragResult.sources || []);
+    const diagnostics = {
+      ...(ragResult.diagnostics || {}),
+      timingsMs: {
+        ...(ragResult.diagnostics?.timings_ms || {}),
+        ...(ragResult.diagnostics?.timingsMs || {}),
+        backendPreprocessing: timingsMs.preprocessing,
+        backendRagCall: timingsMs.ragService,
+      },
+      cache: ragResult.diagnostics?.cache || { hit: false },
+    };
+    diagnostics.timingsMs.backendTotal = nowMs() - requestStarted;
 
     conversation.messages.push({
       role: "assistant",
       content: ragResult.answer,
       sources,
+      diagnostics,
     });
 
     await conversation.save();
@@ -370,6 +397,7 @@ router.post("/", async (req, res) => {
       answer: ragResult.answer,
       sources,
       conversationId: conversation._id,
+      diagnostics,
     });
   } catch (err) {
     const detail = err.response?.data?.detail || err.message;
