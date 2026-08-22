@@ -77,6 +77,7 @@ function createStyle(config) {
     .ragw-user{margin-left:auto;background:${sendButtonColor};color:#fff}
     .ragw-bot{background:#fff;border:1px solid #e1e7ef;color:#172033}
     .ragw-sources{margin-top:8px;border-top:1px solid #e6ebf2;padding-top:7px;font-size:11px;color:#64748b}
+    .ragw-suggestions{display:grid;gap:6px;margin-top:10px}.ragw-suggestion{width:100%;border:1px solid #cbd5e1;border-radius:7px;background:#f8fafc;color:#1e293b;padding:8px 9px;text-align:left;font:inherit;font-size:12px;line-height:1.35;cursor:pointer}.ragw-suggestion:hover{border-color:${sendButtonColor};background:#f1f5f9}.ragw-suggestion:disabled{opacity:.55;cursor:not-allowed}
     .ragw-line{min-height:1em;margin:0 0 5px}.ragw-line:last-child{margin-bottom:0}
     .ragw-list{padding-left:18px;margin:6px 0}.ragw-list li{margin:3px 0}
     .ragw-feedback{display:flex;align-items:center;gap:6px;margin-top:9px;padding-top:8px;border-top:1px solid #eef2f7;color:#64748b;font-size:11px}
@@ -134,7 +135,7 @@ function appendFormattedAnswer(node, text) {
   }
 }
 
-function messageNode(role, text, sources = [], feedbackOptions = null) {
+function messageNode(role, text, sources = [], feedbackOptions = null, suggestions = []) {
   const node = document.createElement("div");
   node.className = `ragw-msg ${role === "user" ? "ragw-user" : "ragw-bot"}`;
   appendFormattedAnswer(node, text);
@@ -143,6 +144,22 @@ function messageNode(role, text, sources = [], feedbackOptions = null) {
     sourceBox.className = "ragw-sources";
     sourceBox.textContent = `Sources: ${sources.map((source) => source.documentName).filter(Boolean).join(", ")}`;
     node.appendChild(sourceBox);
+  }
+  if (role !== "user" && suggestions.length) {
+    const choices = document.createElement("div");
+    choices.className = "ragw-suggestions";
+    for (const suggestion of suggestions) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "ragw-suggestion";
+      button.textContent = suggestion.label;
+      button.addEventListener("click", () => {
+        choices.querySelectorAll("button").forEach((item) => { item.disabled = true; });
+        feedbackOptions?.onSuggestion?.(suggestion.message);
+      });
+      choices.appendChild(button);
+    }
+    node.appendChild(choices);
   }
   if (role !== "user" && feedbackOptions) {
     const feedback = document.createElement("div");
@@ -238,11 +255,7 @@ function initWidget(options = {}) {
   const send = root.querySelector(".ragw-send");
   const toggle = root.querySelector(".ragw-button");
 
-  messages.appendChild(messageNode("bot", config.greeting || "Hi, how can I help?"));
-  toggle.addEventListener("click", () => root.classList.toggle("ragw-open"));
-  form.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const text = input.value.trim();
+  async function submitMessage(text) {
     if (!text) return;
     input.value = "";
     messages.appendChild(messageNode("user", text));
@@ -258,7 +271,11 @@ function initWidget(options = {}) {
         "bot",
         result.answer,
         result.sources || [],
-        { onFeedback: (feedback) => sendFeedback(config, result.conversationId, feedback) }
+        {
+          onFeedback: (feedback) => sendFeedback(config, result.conversationId, feedback),
+          onSuggestion: submitMessage,
+        },
+        result.suggestions || []
       ));
     } catch (error) {
       typing.remove();
@@ -267,6 +284,13 @@ function initWidget(options = {}) {
       send.disabled = false;
       messages.scrollTop = messages.scrollHeight;
     }
+  }
+
+  messages.appendChild(messageNode("bot", config.greeting || "Hi, how can I help?"));
+  toggle.addEventListener("click", () => root.classList.toggle("ragw-open"));
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    await submitMessage(input.value.trim());
   });
 
   document.body.appendChild(root);

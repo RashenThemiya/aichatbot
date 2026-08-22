@@ -759,10 +759,9 @@ ${baseConfig}
 ${widgetScriptSrc()}`;
 }
 
-  async function handleWidgetTestChat(event) {
-    event.preventDefault();
-    if (!selectedCompany || !widgetApiKeyInput.trim() || !widgetTestMessage.trim()) return;
-    const message = widgetTestMessage.trim();
+  async function sendWidgetTestMessage(message) {
+    if (!selectedCompany || !widgetApiKeyInput.trim() || !message?.trim()) return;
+    message = message.trim();
     setWidgetTestMessage("");
     setWidgetTestMessages((current) => [...current, { role: "user", content: message }]);
 
@@ -790,10 +789,16 @@ ${widgetScriptSrc()}`;
           role: "assistant",
           content: result.answer,
           sources: result.sources || [],
+          suggestions: result.suggestions || [],
           conversationId: result.conversationId,
         },
       ]);
     }
+  }
+
+  async function handleWidgetTestChat(event) {
+    event.preventDefault();
+    await sendWidgetTestMessage(widgetTestMessage);
   }
 
   async function handleSaveWhatsAppIntegration(event) {
@@ -1316,6 +1321,21 @@ ${widgetScriptSrc()}`;
                       {message.sources?.length > 0 && (
                         <div className="pt-2 mt-2 text-xs border-t border-slate-200 text-slate-500">
                           Sources: {message.sources.map((source) => source.documentName).filter(Boolean).join(", ")}
+                        </div>
+                      )}
+                      {message.role === "assistant" && message.suggestions?.length > 0 && (
+                        <div className="grid gap-2 mt-3">
+                          {message.suggestions.map((suggestion, suggestionIndex) => (
+                            <button
+                              key={`${suggestion.label}-${suggestionIndex}`}
+                              type="button"
+                              onClick={() => sendWidgetTestMessage(suggestion.message)}
+                              disabled={loading.widgetTest}
+                              className="px-3 py-2 text-xs leading-5 text-left border rounded border-slate-300 bg-slate-50 text-slate-700 hover:border-slate-500 hover:bg-slate-100 disabled:opacity-50"
+                            >
+                              {suggestion.label}
+                            </button>
+                          ))}
                         </div>
                       )}
                       {message.role === "assistant" && message.conversationId && (

@@ -342,6 +342,7 @@ router.post("/", async (req, res) => {
         sessionId: sid,
         answer: preprocessed.reply,
         sources: [],
+        suggestions: [],
         conversationId: conversation._id,
       });
     }
@@ -369,6 +370,7 @@ router.post("/", async (req, res) => {
       sessionId: sid,
       answer: ragResult.answer,
       sources,
+      suggestions: ragResult.suggestions || [],
       conversationId: conversation._id,
     });
   } catch (err) {

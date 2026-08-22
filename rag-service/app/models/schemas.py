@@ -31,9 +31,15 @@ class SourceChunk(BaseModel):
     page_number: int | None = None
 
 
+class ClarificationSuggestion(BaseModel):
+    label: str
+    message: str
+
+
 class QueryResponse(BaseModel):
     answer: str
     sources: list[SourceChunk]
+    suggestions: list[ClarificationSuggestion] = Field(default_factory=list)
 
 
 class IngestResponse(BaseModel):
