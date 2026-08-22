@@ -8,6 +8,8 @@ class Settings(BaseSettings):
     chroma_persist_dir: str = "./chroma_data"
     chunk_size: int = 600
     chunk_overlap: int = 150
+    embedding_batch_size: int = 128
+    vector_store_batch_size: int = 500
     top_k: int = 6
     retrieval_candidates: int = 40
     minimum_relevance_score: float = 0.25
@@ -27,6 +29,8 @@ class Settings(BaseSettings):
     ocr_dpi: int = 300
     ocr_language: str = "eng"
     tesseract_cmd: str = ""
+    openai_request_timeout_seconds: float = 120.0
+    openai_max_retries: int = 5
 
     class Config:
         env_file = ".env"

@@ -75,6 +75,50 @@ function FormattedAnswer({ text }) {
   );
 }
 
+function ChatDiagnostics({ diagnostics }) {
+  if (!diagnostics) return null;
+
+  const timings = diagnostics.timingsMs || diagnostics.timings_ms || {};
+  const retrieval = diagnostics.retrieval || {};
+  const timingEntries = Object.entries(timings).filter(([, value]) => Number.isFinite(Number(value)));
+  const retrievalEntries = Object.entries(retrieval);
+  const cacheHit = Boolean(diagnostics.cache?.hit);
+
+  if (!timingEntries.length && !retrievalEntries.length && !diagnostics.cache) {
+    return null;
+  }
+
+  return (
+    <div className="mt-4 border rounded border-slate-200 bg-slate-50">
+      <div className="flex items-center justify-between gap-3 px-3 py-2 border-b border-slate-200">
+        <span className="text-xs font-semibold tracking-wide uppercase text-slate-500">Diagnostics</span>
+        <span className={classNames("rounded px-2 py-0.5 text-xs", cacheHit ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-600")}>
+          Cache {cacheHit ? "hit" : "miss"}
+        </span>
+      </div>
+      {timingEntries.length > 0 && (
+        <div className="grid grid-cols-2 gap-2 p-3 text-xs sm:grid-cols-3">
+          {timingEntries.map(([key, value]) => (
+            <div key={key} className="rounded border border-slate-200 bg-white px-2 py-1.5">
+              <div className="font-semibold text-slate-700">{key.replace(/_/g, " ")}</div>
+              <div className="text-slate-500">{Number(value)} ms</div>
+            </div>
+          ))}
+        </div>
+      )}
+      {retrievalEntries.length > 0 && (
+        <div className="flex flex-wrap gap-2 px-3 pb-3 text-xs text-slate-600">
+          {retrievalEntries.map(([key, value]) => (
+            <span key={key} className="rounded bg-white px-2 py-1 ring-1 ring-slate-200">
+              {key.replace(/_/g, " ")}: {String(value)}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function App() {
   const [currentUser, setCurrentUser] = useState(null);
   const [activeSection, setActiveSection] = useState("dashboard");
@@ -2584,6 +2628,7 @@ ${widgetScriptSrc()}`;
                         </button>
                       </div>
                       <div className="mt-4 text-xs text-slate-500">Session: {chatResult.sessionId}</div>
+                      <ChatDiagnostics diagnostics={chatResult.diagnostics} />
                       <div className="mt-4 space-y-2">
                         {(chatResult.sources || []).map((source, index) => (
                           <div key={`${source.documentId}-${index}`} className="p-3 border rounded border-slate-200 bg-slate-50">

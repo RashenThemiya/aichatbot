@@ -28,6 +28,10 @@ const messageSchema = new mongoose.Schema(
       enum: ["helpful", "not_helpful", ""],
       default: "",
     },
+    diagnostics: {
+      type: mongoose.Schema.Types.Mixed,
+      default: undefined,
+    },
   },
   { _id: false }
 );

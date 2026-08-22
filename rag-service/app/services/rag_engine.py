@@ -1,6 +1,7 @@
 import re
 
 from openai import OpenAI
+from time import perf_counter
 
 from app.config import settings
 from app.models.schemas import ClarificationSuggestion, QueryResponse, SourceChunk
@@ -133,40 +134,74 @@ class RAGEngine:
         top_k: int | None = None,
         history: list[str] | None = None,
     ) -> QueryResponse:
-        k = top_k or settings.top_k
+        query_started = perf_counter()
+        timings: dict[str, int] = {}
+        retrieval_stats: dict[str, int | bool] = {}
 
+        def mark(name: str, started: float) -> None:
+            timings[name] = int((perf_counter() - started) * 1000)
+
+        k = top_k or settings.top_k
+        retrieval_stats["top_k"] = k
+        retrieval_stats["reranking_enabled"] = bool(settings.enable_reranking or self.cross_encoder)
+        retrieval_stats["answer_verification_enabled"] = bool(settings.enable_answer_verification)
+
+        started = perf_counter()
         if not self.store.company_has_documents(company_id):
+            mark("document_check", started)
+            timings["total"] = int((perf_counter() - query_started) * 1000)
             return QueryResponse(
                 answer="No documents have been uploaded for this company yet. Please upload support documents first.",
                 sources=[],
+                diagnostics=QueryDiagnostics(
+                    timings_ms=timings,
+                    retrieval=retrieval_stats,
+                ),
             )
+        mark("document_check", started)
 
+        started = perf_counter()
         standalone_question = self._standalone_question(question, history or [])
+        mark("standalone_question", started)
+
+        started = perf_counter()
         queries = []
         for variant in self._multilingual_variants(standalone_question):
             queries.extend(self._expand_query(variant))
         queries = list(dict.fromkeys(queries))
+        mark("query_expansion", started)
+        retrieval_stats["query_count"] = len(queries)
+
         candidate_k = max(k, settings.retrieval_candidates)
         per_query_k = max(6, candidate_k // len(queries))
         seen = {}
+        started = perf_counter()
         for q in queries:
             for chunk in self.store.hybrid_query(company_id, q, per_query_k):
                 key = (chunk["document_id"], chunk.get("page_number"), chunk["content"][:80])
                 if key not in seen or chunk["rank_score"] > seen[key]["rank_score"]:
                     seen[key] = chunk
+        mark("retrieval", started)
+        retrieval_stats["candidate_count"] = len(seen)
+
         candidates = sorted(
             seen.values(), key=lambda c: c["rank_score"], reverse=True
         )[:candidate_k]
+        started = perf_counter()
         retrieved = self._rerank(standalone_question, candidates, k)
+        mark("rerank", started)
         retrieved = [
             chunk for chunk in retrieved
             if chunk["score"] >= settings.minimum_relevance_score
         ]
+        retrieval_stats["retrieved_count"] = len(retrieved)
+        started = perf_counter()
         retrieved = self.store.expand_neighbors(
             company_id,
             retrieved,
             settings.neighbor_chunks,
         )
+        mark("neighbor_expansion", started)
         
 
         if not retrieved:
@@ -191,6 +226,7 @@ class RAGEngine:
 
         recent_history = (history or [])[-settings.conversation_history_messages:]
         conversation = "\n".join(recent_history) or "(no earlier messages)"
+        started = perf_counter()
         response = self.openai.chat.completions.create(
             model=settings.openai_chat_model,
             messages=[
@@ -207,8 +243,10 @@ class RAGEngine:
             ],
             temperature=0,
         )
+        mark("answer_generation", started)
 
         answer = response.choices[0].message.content or ""
+        started = perf_counter()
         answer = self._verify_answer(standalone_question, context, answer)
         if self._is_unsupported_answer(answer):
             suggestions = self._clarification_suggestions(question, candidates)
@@ -228,7 +266,15 @@ class RAGEngine:
             for c in retrieved
         ]
 
-        return QueryResponse(answer=answer, sources=sources)
+        timings["total"] = int((perf_counter() - query_started) * 1000)
+        return QueryResponse(
+            answer=answer,
+            sources=sources,
+            diagnostics=QueryDiagnostics(
+                timings_ms=timings,
+                retrieval=retrieval_stats,
+            ),
+        )
 
     @staticmethod
     def _is_unsupported_answer(answer: str) -> bool:

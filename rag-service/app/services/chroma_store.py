@@ -1,3 +1,7 @@
+import os
+
+os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
+
 import chromadb
 import math
 import re
@@ -14,7 +18,11 @@ class ChromaStore:
             path=settings.chroma_persist_dir,
             settings=ChromaSettings(anonymized_telemetry=False),
         )
-        self.openai = OpenAI(api_key=settings.openai_api_key)
+        self.openai = OpenAI(
+            api_key=settings.openai_api_key,
+            timeout=settings.openai_request_timeout_seconds,
+            max_retries=settings.openai_max_retries,
+        )
 
     def _collection_name(self, company_id: str) -> str:
         safe_id = company_id.replace("-", "_")
@@ -27,11 +35,16 @@ class ChromaStore:
         )
 
     def _embed(self, texts: list[str]) -> list[list[float]]:
-        response = self.openai.embeddings.create(
-            model=settings.openai_embedding_model,
-            input=texts,
-        )
-        return [item.embedding for item in response.data]
+        """Embed bounded batches so large PDFs never become one huge request."""
+        embeddings: list[list[float]] = []
+        batch_size = max(1, settings.embedding_batch_size)
+        for start in range(0, len(texts), batch_size):
+            response = self.openai.embeddings.create(
+                model=settings.openai_embedding_model,
+                input=texts[start:start + batch_size],
+            )
+            embeddings.extend(item.embedding for item in response.data)
+        return embeddings
 
     def add_document_chunks(
         self,
@@ -65,12 +78,17 @@ class ChromaStore:
             for i, chunk in enumerate(chunks)
         ]
 
-        collection.add(
-            ids=ids,
-            embeddings=embeddings,
-            documents=contents,
-            metadatas=metadatas,
-        )
+        # Chroma also has a maximum batch size. Keep writes bounded independently
+        # from the embeddings API batch size.
+        batch_size = max(1, settings.vector_store_batch_size)
+        for start in range(0, len(chunks), batch_size):
+            end = start + batch_size
+            collection.add(
+                ids=ids[start:end],
+                embeddings=embeddings[start:end],
+                documents=contents[start:end],
+                metadatas=metadatas[start:end],
+            )
         return len(chunks)
 
     def delete_document(self, company_id: str, document_id: str) -> None:
