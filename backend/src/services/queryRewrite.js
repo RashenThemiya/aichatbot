@@ -4,22 +4,23 @@ const config = require("../config");
 const REWRITE_TIMEOUT_MS = 15000;
 const isDev = process.env.NODE_ENV !== "production";
 
-const SMALL_TALK_INTENTS = new Set(["greeting", "thanks", "goodbye"]);
+const SMALL_TALK_INTENTS = new Set(["greeting", "introduction", "thanks", "goodbye"]);
 
 const SYSTEM_PROMPT = `You classify and preprocess customer messages for a support chatbot.
 
 Return JSON only with this exact shape:
 {
-  "intent": "greeting" | "thanks" | "goodbye" | "support_question",
-  "reply": "short friendly reply for greeting/thanks/goodbye, otherwise null",
+  "intent": "greeting" | "introduction" | "thanks" | "goodbye" | "support_question",
+  "reply": "short friendly reply for greeting/introduction/thanks/goodbye, otherwise null",
   "correctedQuestion": "spelling-corrected question for support_question, otherwise null"
 }
 
 Rules:
-- Use greeting, thanks, or goodbye ONLY when the message is purely social with no support question.
+- Use greeting, introduction, thanks, or goodbye ONLY when the message is purely social with no support question.
+- An introduction includes a customer's name, such as "Hi, I am Maya". Greet them by name.
 - If the message mixes small talk with a real question (e.g. "hi how do I reset password"), use support_question.
 - For support_question, fix spelling and grammar in correctedQuestion while keeping the meaning.
-- reply must be one short friendly sentence for greeting, thanks, or goodbye.
+- reply must be one short friendly sentence for greeting, introduction, thanks, or goodbye.
 - Do not answer support questions in reply; only set correctedQuestion.`;
 
 function logAnalyze(original, result, reason) {

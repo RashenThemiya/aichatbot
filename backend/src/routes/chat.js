@@ -21,6 +21,7 @@ function isAllowedWidgetRoute(req) {
   if (!isWidgetRequest(req)) return true;
 
   if (req.method === "POST" && req.path === "/") return true;
+  if (req.method === "POST" && req.path === "/feedback") return true;
   if (req.method === "POST" && req.path === "/auth/google") return true;
   if (req.method === "POST" && req.path === "/auth/external") return true;
   if (req.method === "GET" && req.path.startsWith("/history/")) return true;
@@ -132,7 +133,16 @@ function mapSources(ragSources = []) {
     documentName: source.document_name,
     content: source.content,
     score: source.score,
+    pageNumber: source.page_number,
   }));
+}
+
+function nowMs() {
+  return Number(process.hrtime.bigint() / 1000000n);
+}
+
+function escapeRegex(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 async function mergeGuestConversation({
@@ -142,6 +152,8 @@ async function mergeGuestConversation({
   customerName,
   customerEmail,
   customerPhone,
+  customerExternalId,
+  customerAuthProvider,
 }) {
   if (!isValidGuestSessionId(guestSessionId)) return;
 
@@ -164,6 +176,10 @@ async function mergeGuestConversation({
     guestConversation.customerName = customerName || guestConversation.customerName || "";
     guestConversation.customerEmail = customerEmail || guestConversation.customerEmail || "";
     guestConversation.customerPhone = customerPhone || guestConversation.customerPhone || "";
+    guestConversation.customerExternalId =
+      customerExternalId || guestConversation.customerExternalId || "";
+    guestConversation.customerAuthProvider =
+      customerAuthProvider || guestConversation.customerAuthProvider || "";
     guestConversation.channel = "web";
 
     await guestConversation.save();
@@ -173,6 +189,10 @@ async function mergeGuestConversation({
   targetConversation.customerName = customerName || targetConversation.customerName || "";
   targetConversation.customerEmail = customerEmail || targetConversation.customerEmail || "";
   targetConversation.customerPhone = customerPhone || targetConversation.customerPhone || "";
+  targetConversation.customerExternalId =
+    customerExternalId || targetConversation.customerExternalId || "";
+  targetConversation.customerAuthProvider =
+    customerAuthProvider || targetConversation.customerAuthProvider || "";
 
   if (guestConversation.messages?.length) {
     targetConversation.messages.push(...guestConversation.messages);
@@ -203,6 +223,8 @@ router.post("/auth/google", async (req, res) => {
       targetSessionId: sessionId,
       customerName: googleUser.name,
       customerEmail: googleUser.email,
+      customerExternalId: googleUser.googleSub,
+      customerAuthProvider: "google",
     });
 
     res.json({
@@ -243,6 +265,8 @@ router.post("/auth/external", async (req, res) => {
       customerName: externalUser.name,
       customerEmail: externalUser.email,
       customerPhone: externalUser.phone,
+      customerExternalId: externalUser.externalUserId,
+      customerAuthProvider: "external",
     });
 
     res.json({
@@ -261,6 +285,8 @@ router.post("/auth/external", async (req, res) => {
 
 router.post("/", async (req, res) => {
   try {
+    const requestStarted = nowMs();
+    const timingsMs = {};
     const company = await getCompanyOrFail(req.params.companyId);
 
     await ensureWidgetAccess(req, company);
@@ -271,6 +297,8 @@ router.post("/", async (req, res) => {
       customerName,
       customerEmail,
       customerPhone,
+      customerExternalId,
+      customerAuthProvider,
     } = req.body;
 
     if (!message || !message.trim()) {
@@ -291,6 +319,8 @@ router.post("/", async (req, res) => {
         customerName: customerName || "",
         customerEmail: customerEmail || "",
         customerPhone: customerPhone || "",
+        customerExternalId: customerExternalId || "",
+        customerAuthProvider: customerAuthProvider || (sid.startsWith("web_guest_") ? "guest" : ""),
         channel: "web",
         messages: [],
       });
@@ -298,12 +328,16 @@ router.post("/", async (req, res) => {
       if (customerName) conversation.customerName = customerName;
       if (customerEmail) conversation.customerEmail = customerEmail;
       if (customerPhone) conversation.customerPhone = customerPhone;
+      if (customerExternalId) conversation.customerExternalId = customerExternalId;
+      if (customerAuthProvider) conversation.customerAuthProvider = customerAuthProvider;
     }
 
     const originalMessage = message.trim();
     conversation.messages.push({ role: "user", content: originalMessage });
 
+    const preprocessStarted = nowMs();
     const preprocessed = await preprocessUserMessage(originalMessage);
+    timingsMs.preprocessing = nowMs() - preprocessStarted;
 
     if (preprocessed.type === "small_talk") {
       conversation.messages.push({
@@ -312,25 +346,49 @@ router.post("/", async (req, res) => {
       });
       await conversation.save();
 
+      timingsMs.total = nowMs() - requestStarted;
       return res.json({
         sessionId: sid,
         answer: preprocessed.reply,
         sources: [],
+        suggestions: [],
         conversationId: conversation._id,
+        diagnostics: {
+          timingsMs,
+          cache: { hit: false },
+        },
       });
     }
 
+    const ragStarted = nowMs();
     const ragResult = await ragClient.queryKnowledge({
       companyId: company._id.toString(),
       question: preprocessed.question,
+      history: conversation.messages
+        .slice(0, -1)
+        .slice(-6)
+        .map((item) => `${item.role}: ${item.content}`),
     });
+    timingsMs.ragService = nowMs() - ragStarted;
 
     const sources = mapSources(ragResult.sources || []);
+    const diagnostics = {
+      ...(ragResult.diagnostics || {}),
+      timingsMs: {
+        ...(ragResult.diagnostics?.timings_ms || {}),
+        ...(ragResult.diagnostics?.timingsMs || {}),
+        backendPreprocessing: timingsMs.preprocessing,
+        backendRagCall: timingsMs.ragService,
+      },
+      cache: ragResult.diagnostics?.cache || { hit: false },
+    };
+    diagnostics.timingsMs.backendTotal = nowMs() - requestStarted;
 
     conversation.messages.push({
       role: "assistant",
       content: ragResult.answer,
       sources,
+      diagnostics,
     });
 
     await conversation.save();
@@ -339,7 +397,9 @@ router.post("/", async (req, res) => {
       sessionId: sid,
       answer: ragResult.answer,
       sources,
+      suggestions: ragResult.suggestions || [],
       conversationId: conversation._id,
+      diagnostics,
     });
   } catch (err) {
     const detail = err.response?.data?.detail || err.message;
@@ -347,6 +407,35 @@ router.post("/", async (req, res) => {
     res.status(err.statusCode || err.response?.status || 500).json({
       error: detail,
     });
+  }
+});
+
+router.post("/feedback", async (req, res) => {
+  try {
+    const company = await getCompanyOrFail(req.params.companyId);
+    await ensureWidgetAccess(req, company);
+    const { conversationId, feedback } = req.body;
+    if (!["helpful", "not_helpful"].includes(feedback)) {
+      return res.status(400).json({ error: "Invalid feedback value" });
+    }
+    const conversation = await Conversation.findOne({
+      _id: conversationId,
+      companyId: company._id,
+    });
+    if (!conversation) {
+      return res.status(404).json({ error: "Conversation not found" });
+    }
+    const assistantMessage = [...conversation.messages]
+      .reverse()
+      .find((message) => message.role === "assistant");
+    if (!assistantMessage) {
+      return res.status(404).json({ error: "Assistant message not found" });
+    }
+    assistantMessage.feedback = feedback;
+    await conversation.save();
+    res.json({ success: true, feedback });
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ error: err.message });
   }
 });
 
@@ -386,9 +475,25 @@ router.get("/history/:sessionId", async (req, res) => {
 
 router.get("/conversations", async (req, res) => {
   try {
-    const conversations = await Conversation.find({
+    const filter = {
       companyId: req.params.companyId,
-    })
+    };
+
+    const search = String(req.query.search || "").trim();
+    if (search) {
+      const regex = new RegExp(escapeRegex(search), "i");
+      filter.$or = [
+        { sessionId: regex },
+        { customerName: regex },
+        { customerEmail: regex },
+        { customerPhone: regex },
+        { customerExternalId: regex },
+        { customerAuthProvider: regex },
+        { channel: regex },
+      ];
+    }
+
+    const conversations = await Conversation.find(filter)
       .sort({ updatedAt: -1 })
       .select("-messages");
 

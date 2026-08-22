@@ -42,53 +42,127 @@ const upload = multer({
   },
 });
 
+function normalizeRelativeName(value) {
+  const normalized = String(value || "")
+    .replace(/\\/g, "/")
+    .split("/")
+    .filter((part) => part && part !== "." && part !== "..")
+    .join("/");
+
+  return normalized || "";
+}
+
 async function ensureCompany(companyId) {
   return Company.findById(companyId);
 }
 
-router.post("/", upload.single("file"), async (req, res) => {
+async function createAndIndexDocument(
+  company,
+  file,
+  originalName = file.originalname,
+  metadata = {}
+) {
+  const doc = await Document.create({
+    companyId: company._id,
+    originalName,
+    fileName: file.filename,
+    filePath: path.resolve(file.path),
+    mimeType: file.mimetype,
+    fileSize: file.size,
+    status: "indexing",
+    documentVersion: metadata.documentVersion || "1",
+    effectiveDate: metadata.effectiveDate || null,
+    isActive: metadata.isActive !== false && metadata.isActive !== "false",
+  });
+
+  try {
+    const result = await ragClient.ingestDocument({
+      companyId: company._id.toString(),
+      documentId: doc._id.toString(),
+      filePath: doc.filePath,
+      documentName: doc.originalName,
+      documentVersion: doc.documentVersion,
+      effectiveDate: doc.effectiveDate?.toISOString() || "",
+      isActive: doc.isActive,
+    });
+
+    doc.status = "indexed";
+    doc.chunksIndexed = result.chunks_indexed;
+    await doc.save();
+
+    return { ok: true, document: doc };
+  } catch (indexErr) {
+    doc.status = "failed";
+    doc.indexError = indexErr.response?.data?.detail || indexErr.message;
+    await doc.save();
+
+    return {
+      ok: false,
+      error: "Document saved but indexing failed",
+      document: doc,
+      detail: doc.indexError,
+    };
+  }
+}
+
+router.post(
+  "/",
+  upload.fields([
+    { name: "files", maxCount: 200 },
+    { name: "file", maxCount: 1 },
+  ]),
+  async (req, res) => {
   try {
     const company = await ensureCompany(req.params.companyId);
     if (!company) {
       return res.status(404).json({ error: "Company not found" });
     }
-    if (!req.file) {
-      return res.status(400).json({ error: "PDF file is required (field: file)" });
+    const files = [...(req.files?.files || []), ...(req.files?.file || [])];
+    if (files.length === 0) {
+      return res.status(400).json({ error: "At least one PDF file is required (field: files)" });
     }
 
-    const doc = await Document.create({
-      companyId: company._id,
-      originalName: req.file.originalname,
-      fileName: req.file.filename,
-      filePath: path.resolve(req.file.path),
-      mimeType: req.file.mimetype,
-      fileSize: req.file.size,
-      status: "indexing",
-    });
+    const relativePaths = Array.isArray(req.body.relativePaths)
+      ? req.body.relativePaths
+      : req.body.relativePaths
+        ? [req.body.relativePaths]
+        : [];
+    const results = [];
+    for (const [index, file] of files.entries()) {
+      const relativeName = normalizeRelativeName(relativePaths[index]);
+      results.push(await createAndIndexDocument(
+        company,
+        file,
+        relativeName || file.originalname,
+        {
+          documentVersion: req.body.documentVersion,
+          effectiveDate: req.body.effectiveDate,
+          isActive: req.body.isActive,
+        }
+      ));
+    }
 
-    try {
-      const result = await ragClient.ingestDocument({
-        companyId: company._id.toString(),
-        documentId: doc._id.toString(),
-        filePath: doc.filePath,
-        documentName: doc.originalName,
-      });
+    const failed = results.filter((result) => !result.ok);
+    const documents = results.map((result) => result.document);
 
-      doc.status = "indexed";
-      doc.chunksIndexed = result.chunks_indexed;
-      await doc.save();
-
-      res.status(201).json(doc);
-    } catch (indexErr) {
-      doc.status = "failed";
-      doc.indexError = indexErr.response?.data?.detail || indexErr.message;
-      await doc.save();
+    if (files.length === 1) {
+      const [result] = results;
+      if (result.ok) return res.status(201).json(result.document);
       res.status(502).json({
-        error: "Document saved but indexing failed",
-        document: doc,
-        detail: doc.indexError,
+        error: result.error,
+        document: result.document,
+        detail: result.detail,
       });
+      return;
     }
+
+    res.status(failed.length ? 207 : 201).json({
+      message: failed.length
+        ? `${documents.length - failed.length} of ${documents.length} documents uploaded and indexed`
+        : `${documents.length} documents uploaded and indexed`,
+      documents,
+      failed,
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -120,6 +194,77 @@ router.get("/:documentId", async (req, res) => {
       return res.status(404).json({ error: "Document not found" });
     }
     res.json(doc);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.delete("/all", async (req, res) => {
+  try {
+    const documents = await Document.find({ companyId: req.params.companyId });
+
+    for (const doc of documents) {
+      try {
+        await ragClient.deleteDocumentVectors({
+          companyId: req.params.companyId,
+          documentId: doc._id.toString(),
+        });
+      } catch (ragErr) {
+        console.warn(`RAG delete warning for ${doc._id}:`, ragErr.message);
+      }
+      if (fs.existsSync(doc.filePath)) {
+        fs.unlinkSync(doc.filePath);
+      }
+    }
+
+    await Document.deleteMany({ companyId: req.params.companyId });
+    res.json({
+      message: `${documents.length} document${documents.length === 1 ? "" : "s"} deleted`,
+      deletedCount: documents.length,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.delete("/bulk", async (req, res) => {
+  try {
+    const documentIds = Array.from(new Set(
+      (Array.isArray(req.body.documentIds) ? req.body.documentIds : [])
+        .map((id) => String(id || "").trim())
+        .filter(Boolean)
+    ));
+    if (documentIds.length === 0) {
+      return res.status(400).json({ error: "At least one document ID is required" });
+    }
+    const documents = await Document.find({
+      _id: { $in: documentIds },
+      companyId: req.params.companyId,
+    });
+
+    for (const doc of documents) {
+      try {
+        await ragClient.deleteDocumentVectors({
+          companyId: req.params.companyId,
+          documentId: doc._id.toString(),
+        });
+      } catch (ragErr) {
+        console.warn(`RAG delete warning for ${doc._id}:`, ragErr.message);
+      }
+      if (fs.existsSync(doc.filePath)) {
+        fs.unlinkSync(doc.filePath);
+      }
+    }
+
+    await Document.deleteMany({
+      _id: { $in: documents.map((doc) => doc._id) },
+      companyId: req.params.companyId,
+    });
+
+    res.json({
+      message: `${documents.length} document${documents.length === 1 ? "" : "s"} deleted`,
+      deletedCount: documents.length,
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -178,6 +323,9 @@ router.post("/:documentId/reindex", async (req, res) => {
         documentId: doc._id.toString(),
         filePath: doc.filePath,
         documentName: doc.originalName,
+        documentVersion: doc.documentVersion,
+        effectiveDate: doc.effectiveDate?.toISOString() || "",
+        isActive: doc.isActive,
       });
 
       doc.status = "indexed";

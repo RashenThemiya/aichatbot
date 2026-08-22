@@ -22,9 +22,59 @@ function createWidgetApiKey() {
   return `ragw_${crypto.randomBytes(32).toString("hex")}`;
 }
 
+const DEFAULT_WIDGET_THEME = {
+  headerColor: "#000000",
+  sendButtonColor: "#000000",
+  launcherColor: "#000000",
+  launcherIcon: "bot",
+};
+
+function isHexColor(value) {
+  return typeof value === "string" && /^#[0-9a-fA-F]{6}$/.test(value);
+}
+
+function normalizeWidgetTheme(theme = {}, fallbackTheme = DEFAULT_WIDGET_THEME) {
+  const source =
+    theme && typeof theme.widgetTheme === "object" && theme.widgetTheme !== null
+      ? theme.widgetTheme
+      : theme || {};
+  const fallback = {
+    headerColor: isHexColor(fallbackTheme.headerColor)
+      ? fallbackTheme.headerColor
+      : DEFAULT_WIDGET_THEME.headerColor,
+    sendButtonColor: isHexColor(fallbackTheme.sendButtonColor)
+      ? fallbackTheme.sendButtonColor
+      : DEFAULT_WIDGET_THEME.sendButtonColor,
+    launcherColor: isHexColor(fallbackTheme.launcherColor)
+      ? fallbackTheme.launcherColor
+      : DEFAULT_WIDGET_THEME.launcherColor,
+    launcherIcon: ["bot", "message", "question"].includes(fallbackTheme.launcherIcon)
+      ? fallbackTheme.launcherIcon
+      : DEFAULT_WIDGET_THEME.launcherIcon,
+  };
+
+  return {
+    headerColor: isHexColor(source.headerColor)
+      ? source.headerColor
+      : fallback.headerColor,
+
+    sendButtonColor: isHexColor(source.sendButtonColor)
+      ? source.sendButtonColor
+      : fallback.sendButtonColor,
+
+    launcherColor: isHexColor(source.launcherColor)
+      ? source.launcherColor
+      : fallback.launcherColor,
+
+    launcherIcon: ["bot", "message", "question"].includes(source.launcherIcon)
+      ? source.launcherIcon
+      : fallback.launcherIcon,
+  };
+}
+
 router.post("/", requireSuperAdmin, async (req, res) => {
   try {
-    const { name, description, slug } = req.body;
+    const { name, description, slug, widgetTheme } = req.body;
     if (!name) {
       return res.status(400).json({ error: "Company name is required" });
     }
@@ -39,6 +89,7 @@ router.post("/", requireSuperAdmin, async (req, res) => {
       name,
       slug: companySlug,
       description: description || "",
+      widgetTheme: normalizeWidgetTheme(widgetTheme),
     });
 
     res.status(201).json(company);
@@ -72,15 +123,38 @@ router.get("/:id", canAccessCompany, async (req, res) => {
 
 router.put("/:id", canAccessCompany, async (req, res) => {
   try {
-    const { name, description, isActive } = req.body;
-    const company = await Company.findByIdAndUpdate(
-      req.params.id,
-      { name, description, isActive },
-      { new: true, runValidators: true }
-    );
+    const { name, description, isActive, widgetTheme } = req.body;
+
+    const company = await Company.findById(req.params.id);
     if (!company) {
       return res.status(404).json({ error: "Company not found" });
     }
+
+    if (name !== undefined) company.name = name;
+    if (description !== undefined) company.description = description;
+    if (isActive !== undefined) company.isActive = isActive;
+    if (widgetTheme !== undefined) {
+      company.widgetTheme = normalizeWidgetTheme(widgetTheme, company.widgetTheme);
+    }
+
+    await company.save();
+
+    res.json(company);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.put("/:id/widget-theme", canAccessCompany, async (req, res) => {
+  try {
+    const company = await Company.findById(req.params.id);
+    if (!company) {
+      return res.status(404).json({ error: "Company not found" });
+    }
+
+    company.widgetTheme = normalizeWidgetTheme(req.body, company.widgetTheme);
+    await company.save();
+
     res.json(company);
   } catch (err) {
     res.status(500).json({ error: err.message });

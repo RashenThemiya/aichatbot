@@ -46,6 +46,9 @@ def ingest_document(request: IngestRequest):
             document_id=request.document_id,
             file_path=request.file_path,
             document_name=request.document_name,
+            document_version=request.document_version,
+            effective_date=request.effective_date,
+            is_active=request.is_active,
         )
         return IngestResponse(
             success=True,
@@ -82,6 +85,7 @@ def query_knowledge(request: QueryRequest):
             company_id=request.company_id,
             question=request.question,
             top_k=request.top_k,
+            history=request.history,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Query failed: {str(e)}")

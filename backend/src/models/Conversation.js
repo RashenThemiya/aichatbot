@@ -18,9 +18,19 @@ const messageSchema = new mongoose.Schema(
           documentName: String,
           content: String,
           score: Number,
+          pageNumber: Number,
         },
       ],
       default: [],
+    },
+    feedback: {
+      type: String,
+      enum: ["helpful", "not_helpful", ""],
+      default: "",
+    },
+    diagnostics: {
+      type: mongoose.Schema.Types.Mixed,
+      default: undefined,
     },
   },
   { _id: false }
@@ -42,6 +52,8 @@ const conversationSchema = new mongoose.Schema(
     customerName: { type: String, default: "" },
     customerEmail: { type: String, default: "" },
     customerPhone: { type: String, default: "" },
+    customerExternalId: { type: String, default: "", index: true },
+    customerAuthProvider: { type: String, default: "", index: true },
     channel: {
       type: String,
       enum: ["web", "sms", "voice", "whatsapp"],

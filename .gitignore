@@ -9,6 +9,14 @@ venv/
 .env
 .env.local
 
+# Docker deploy files
+Dockerfile
+**/Dockerfile
+docker-compose*.yml
+docker-compose*.yaml
+DOCKER.md
+!.env.server.example
+
 # Uploads & data
 backend/uploads/
 rag-service/chroma_data/
