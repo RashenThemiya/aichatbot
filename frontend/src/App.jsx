@@ -803,11 +803,12 @@ ${baseConfig}
 ${widgetScriptSrc()}`;
 }
 
-  async function sendWidgetTestMessage(message) {
+  async function sendWidgetTestMessage(message, displayMessage = message) {
     if (!selectedCompany || !widgetApiKeyInput.trim() || !message?.trim()) return;
     message = message.trim();
+    displayMessage = displayMessage?.trim() || message;
     setWidgetTestMessage("");
-    setWidgetTestMessages((current) => [...current, { role: "user", content: message }]);
+    setWidgetTestMessages((current) => [...current, { role: "user", content: displayMessage }]);
 
     const result = await runTask("widgetTest", async () => {
       const response = await fetch(`${api.baseUrl}/widget/companies/${selectedCompany._id}/chat`, {
@@ -1423,7 +1424,7 @@ ${widgetScriptSrc()}`;
                             <button
                               key={`${suggestion.label}-${suggestionIndex}`}
                               type="button"
-                              onClick={() => sendWidgetTestMessage(suggestion.message)}
+                              onClick={() => sendWidgetTestMessage(suggestion.message, suggestion.label)}
                               disabled={loading.widgetTest}
                               className="px-3 py-2 text-xs leading-5 text-left border rounded border-slate-300 bg-slate-50 text-slate-700 hover:border-slate-500 hover:bg-slate-100 disabled:opacity-50"
                             >
@@ -1432,7 +1433,7 @@ ${widgetScriptSrc()}`;
                           ))}
                         </div>
                       )}
-                      {message.role === "assistant" && message.conversationId && (
+                      {message.role === "assistant" && message.conversationId && message.suggestions?.length === 0 && (
                         <div className="flex items-center gap-2 pt-2 mt-2 text-xs border-t border-slate-200 text-slate-500">
                           <span>Was this helpful?</span>
                           <button

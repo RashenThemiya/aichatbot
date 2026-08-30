@@ -366,7 +366,7 @@ router.post("/", async (req, res) => {
       question: preprocessed.question,
       history: conversation.messages
         .slice(0, -1)
-        .slice(-6)
+        .slice(-16)
         .map((item) => `${item.role}: ${item.content}`),
     });
     timingsMs.ragService = nowMs() - ragStarted;

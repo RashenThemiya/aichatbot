@@ -1,5 +1,6 @@
 import json
 import re
+from difflib import SequenceMatcher
 
 from openai import OpenAI
 from time import perf_counter
@@ -20,6 +21,8 @@ Rules:
 - The context may use different wording, synonyms, or phrasing than the question. Match on MEANING, not exact words — if the context answers the question in different terms, use it.
 - Do not invent facts that aren't supported by the context, but do paraphrase and combine information across the given sources to answer fully.
 - Cite supporting sources inline using their labels, for example [Source 1]. Never cite a source that does not support the statement.
+- A product or service claim must be supported by a context block about that same named product or service. Never use one product's document as support for a different product.
+- Return only a customer-facing answer. Never mention the draft, supplied context, verification, unsupported claims, or text that should be removed.
 - When the context does not support an answer, ask one concise clarification question. Do not claim that the customer must contact support.
 - Do NOT handle orders, bookings, payments, or transactions. If asked, politely explain you can only help with support questions from the knowledge base.
 - If troubleshooting steps are in the context, list them in order.
@@ -43,6 +46,7 @@ Product recommendation behavior:
 - Do not force multiple choice for details that need a precise or open-ended answer. Keep each option list short, non-overlapping, and include units or currency when relevant.
 - Adapt the questions to the user's request and the available products; do not use a rigid questionnaire.
 - If the request is broad or ambiguous, start with the single most useful question. If several independent essentials are clearly missing, ask up to 3 together.
+- Never ask substantially the same clarification twice. After two clarification rounds, stop asking questions and provide the best-supported recommendation possible, clearly stating any assumptions or missing constraints.
 - Once enough information is available, stop asking questions. Recommend the best-fitting option(s), explain why they fit, mention meaningful trade-offs, and cite every product claim.
 - If no available product satisfies a stated hard requirement, say so clearly and explain the closest documented option instead of weakening the requirement.
 - Questions themselves do not need citations. Keep them conversational and in the user's language where practical."""
@@ -109,10 +113,23 @@ class RAGEngine:
             pass
         return [question]
 
-    def _analyze_request(self, question: str, history: list[str]) -> dict:
-        """Understand intent and decide whether one clarification is necessary."""
+    def _analyze_request(
+        self,
+        question: str,
+        history: list[str],
+        catalog_context: str = "",
+        avoid_question: str = "",
+    ) -> dict:
+        """Understand intent and decide whether one grounded clarification is necessary."""
         recent = history[-settings.conversation_history_messages:]
         conversation = "\n".join(recent) or "(no earlier messages)"
+        customer_messages = [
+            re.sub(r"^user:\s*", "", item, flags=re.I)
+            for item in recent
+            if item.strip().lower().startswith("user:")
+        ]
+        customer_messages.append(question)
+        customer_evidence = "\n".join(customer_messages)
         try:
             response = self.openai.chat.completions.create(
                 model=settings.openai_chat_model,
@@ -120,29 +137,55 @@ class RAGEngine:
                     "role": "user",
                     "content": (
                         "Analyze this customer-support request using the conversation. Return one "
-                        "JSON object with exactly these fields: intent, scenario_summary, sufficient, "
-                        "clarification_question, clarification_options, no_more_information. Intent "
+                        "JSON object with exactly these fields: intent, scenario_summary, "
+                        "known_requirements, missing_requirements, sufficient, clarification_question, "
+                        "clarification_options, no_more_information. Intent "
                         "must be one of factual, recommendation, "
                         "comparison, troubleshooting, or unclear. scenario_summary must combine all "
                         "known product names, use case, symptoms, conditions, numbers, compatibility "
                         "requirements, preferences, and hard constraints without inventing anything. "
+                        "known_requirements must be an array of objects with requirement, value, and "
+                        "evidence. evidence must be a short verbatim quote from a USER message. Never "
+                        "treat an assistant statement, catalog description, suggested option, or model "
+                        "assumption as a customer requirement. missing_requirements must be an array of "
+                        "short requirement names that would materially distinguish the available choices. "
                         "For a clear factual question or comparison of named products, sufficient is "
-                        "true. For recommendations and troubleshooting, set sufficient false only when "
-                        "one missing detail could materially change the answer or make guidance unsafe. "
+                        "true. A request like 'which one should I select' is a recommendation and is not "
+                        "sufficient unless the user has explicitly stated an outcome/use case or other "
+                        "decision criteria. For recommendations and troubleshooting, set sufficient false "
+                        "when a missing detail could materially change the answer or make guidance unsafe. "
                         "Never ask again for information already present in the conversation. If "
+                        "at least one customer requirement is known, the next question must target "
+                        "one concrete differentiator found in the catalog, such as a documented "
+                        "dimension, capacity, compatibility condition, environment, or service scope. "
+                        "Do not ask vague catch-all questions about preferences, requirements, or "
+                        "whether there is anything else. If "
                         "sufficient is false, clarification_question must ask only the smallest useful "
                         "question, in the customer's language, and may contain at most 3 short questions. "
                         "Otherwise clarification_question must be an empty string. "
                         "clarification_options must be an array of up to 3 short objects containing "
-                        "label and message. Include options only when they are plausible interpretations "
-                        "of the customer's own wording; never invent products, specifications, or facts. "
-                        "For example, 'SP with 48V lithium' can offer a confirmation of single-phase, "
-                        "48 V lithium battery. Set no_more_information true only when the latest customer "
+                        "label and message. Each message must be a first-person customer answer to the "
+                        "clarification question, never another question or an instruction. For example, "
+                        "use label 'Personal use' with message 'I need it for personal use.' "
+                        "Labels must be concrete answers to the question, not names of information fields. "
+                        "Include options only when they are plausible interpretations "
+                        "of the customer's own wording or concrete choices supported by the catalog; "
+                        "never invent products, specifications, categories, or facts. Preserve names, "
+                        "codes, quantities, and constraints exactly. Set no_more_information true only "
+                        "when the latest customer "
                         "message explicitly says none of the choices match and provides no new useful "
                         "detail. Otherwise it must be false. Do not answer the customer and do not "
-                        "include markdown.\n\n"
+                        "include markdown. Use the catalog excerpts only to make clarification questions "
+                        "and choices relevant to this company's actual offerings.\n\n"
                         f"Conversation:\n{conversation}\n"
-                        f"Latest customer message:\n{question}"
+                        f"Latest customer message:\n{question}\n\n"
+                        f"Available catalog excerpts:\n{catalog_context or '(none available)'}\n\n"
+                        + (
+                            "A previous proposed clarification was rejected as repetitive: "
+                            f"{avoid_question}\nAsk a materially different, concrete catalog-based "
+                            "question. If no useful different question exists, set sufficient true."
+                            if avoid_question else ""
+                        )
                     ),
                 }],
                 temperature=0,
@@ -155,8 +198,25 @@ class RAGEngine:
                 "factual", "recommendation", "comparison", "troubleshooting", "unclear"
             }:
                 intent = "unclear"
+            if self._is_recommendation_request(question):
+                intent = "recommendation"
             sufficient = bool(parsed.get("sufficient", True))
             clarification = str(parsed.get("clarification_question") or "").strip()
+            known_requirements = self._validated_known_requirements(
+                parsed.get("known_requirements") or [], customer_evidence
+            )
+            missing_requirements = [
+                " ".join(str(item).split())[:120]
+                for item in (parsed.get("missing_requirements") or [])
+                if str(item).strip()
+            ][:5]
+            if intent == "recommendation" and not known_requirements:
+                sufficient = False
+                if not clarification:
+                    clarification = (
+                        "What outcome do you need, and what requirements or constraints "
+                        "must the recommendation meet?"
+                    )
             options = []
             for option in parsed.get("clarification_options") or []:
                 if not isinstance(option, dict):
@@ -167,9 +227,18 @@ class RAGEngine:
                     options.append({"label": label[:120], "message": message[:500]})
                 if len(options) == 3:
                     break
+            options = self._sanitize_clarification_options(clarification, options)
+            scenario_summary = str(parsed.get("scenario_summary") or "").strip()
+            if intent == "recommendation":
+                scenario_summary = "; ".join(
+                    f"{item['requirement']}: {item['value']}"
+                    for item in known_requirements
+                )
             return {
                 "intent": intent,
-                "scenario_summary": str(parsed.get("scenario_summary") or "").strip(),
+                "scenario_summary": scenario_summary,
+                "known_requirements": known_requirements,
+                "missing_requirements": missing_requirements,
                 "sufficient": sufficient or not clarification,
                 "clarification_question": clarification,
                 "clarification_options": options,
@@ -180,11 +249,186 @@ class RAGEngine:
             return {
                 "intent": "unclear",
                 "scenario_summary": "",
+                "known_requirements": [],
+                "missing_requirements": [],
                 "sufficient": True,
                 "clarification_question": "",
                 "clarification_options": [],
                 "no_more_information": False,
             }
+
+    @staticmethod
+    def _is_recommendation_request(question: str) -> bool:
+        """Recognize selection language independently of any company's industry."""
+        normalized = " ".join(question.casefold().split())
+        return bool(re.search(
+            r"\b(?:recommend|recommendation|suggest|best|choose|select|suitable|"
+            r"right for me|fit for me|match for me|which one)\b",
+            normalized,
+        ))
+
+    @staticmethod
+    def _validated_known_requirements(items: list, customer_evidence: str) -> list[dict]:
+        """Keep only requirements backed by a verbatim customer statement."""
+        normalized_evidence = re.sub(r"\W+", " ", customer_evidence.casefold()).strip()
+        validated = []
+        seen = set()
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            requirement = " ".join(str(item.get("requirement") or "").split()).strip()
+            value = " ".join(str(item.get("value") or "").split()).strip()
+            evidence = " ".join(str(item.get("evidence") or "").split()).strip()
+            normalized_quote = re.sub(r"\W+", " ", evidence.casefold()).strip()
+            key = (requirement.casefold(), value.casefold())
+            if (
+                not requirement
+                or not value
+                or len(normalized_quote) < 3
+                or normalized_quote not in normalized_evidence
+                or key in seen
+            ):
+                continue
+            seen.add(key)
+            validated.append({
+                "requirement": requirement[:120],
+                "value": value[:300],
+                "evidence": evidence[:300],
+            })
+        return validated[:12]
+
+    @staticmethod
+    def _catalog_context(candidates: list[dict], max_characters: int = 6000) -> str:
+        """Build bounded catalog evidence used only to ask relevant questions."""
+        blocks = []
+        used = 0
+        for candidate in candidates:
+            document_name = " ".join(
+                str(candidate.get("document_name") or "Catalog document").split()
+            )
+            content = " ".join(str(candidate.get("content") or "").split())
+            if not content:
+                continue
+            block = f"[{document_name}] {content[:900]}"
+            remaining = max_characters - used
+            if remaining <= 0:
+                break
+            blocks.append(block[:remaining])
+            used += len(block)
+        return "\n\n".join(blocks)
+
+    @staticmethod
+    def _fallback_clarification(missing_requirements: list[str]) -> str:
+        """Request unresolved criteria without using company-specific vocabulary."""
+        details = [
+            " ".join(str(item).split()).strip(" .?!")
+            for item in missing_requirements
+            if str(item).strip()
+        ][:3]
+        if details:
+            if len(details) == 1:
+                detail_text = details[0]
+            else:
+                detail_text = ", ".join(details[:-1]) + f", and {details[-1]}"
+            return (
+                "Please provide the following detail so I can distinguish the best match: "
+                f"{detail_text}."
+            )
+        return (
+            "Please describe the outcome you need and the most important constraint the "
+            "recommended choice must satisfy."
+        )
+
+    @staticmethod
+    def _looks_like_question(value: str) -> bool:
+        text = re.sub(r"^(?:assistant|user):\s*", "", value.strip(), flags=re.I)
+        if not text:
+            return False
+        if "?" in text:
+            return True
+        return bool(re.match(
+            r"^(?:what|which|who|where|when|why|how|do|does|did|is|are|was|were|"
+            r"can|could|would|will|should|have|has|tell|choose|select|provide|specify|describe|please)\b",
+            text,
+            flags=re.I,
+        ))
+
+    @classmethod
+    def _sanitize_clarification_options(
+        cls, clarification: str, options: list[dict]
+    ) -> list[dict]:
+        """Ensure a suggestion click sends a customer answer, never another prompt."""
+        cleaned = []
+        seen = set()
+        for option in options:
+            label = " ".join(str(option.get("label") or "").split()).strip(" .?!")
+            message = " ".join(str(option.get("message") or "").split()).strip()
+            if not label or label.casefold() in seen:
+                continue
+            seen.add(label.casefold())
+
+            if (
+                not message
+                or cls._looks_like_question(message)
+                or message.casefold().rstrip(" .?!")
+                == clarification.casefold().rstrip(" .?!")
+            ):
+                continue
+            elif not re.match(r"^(?:i|i'm|i’d|i'll|my|we|we're|our)\b", message, re.I):
+                message = f"My answer is: {message.rstrip(' .')}."
+
+            cleaned.append({"label": label[:120], "message": message[:500]})
+            if len(cleaned) == 3:
+                break
+        return cleaned
+
+    @classmethod
+    def _clarification_round_count(cls, history: list[str]) -> int:
+        """Count the current uninterrupted run of assistant clarification questions."""
+        rounds = 0
+        for entry in reversed(history):
+            if not entry.strip().lower().startswith("assistant:"):
+                continue
+            if cls._looks_like_question(entry):
+                rounds += 1
+            else:
+                break
+        return rounds
+
+    @classmethod
+    def _is_repeated_clarification(cls, question: str, history: list[str]) -> bool:
+        proposed = re.sub(r"\W+", " ", question.casefold()).strip()
+        if not proposed:
+            return False
+        proposed_tokens = set(proposed.split())
+        filler_words = {
+            "a", "an", "are", "be", "do", "does", "for", "is", "it", "of",
+            "referring", "that", "the", "this", "to", "what", "which", "you", "your",
+        }
+        proposed_meaning = proposed_tokens - filler_words
+        for entry in history:
+            if not entry.strip().lower().startswith("assistant:"):
+                continue
+            previous = re.sub(
+                r"\W+",
+                " ",
+                re.sub(r"^assistant:\s*", "", entry, flags=re.I).casefold(),
+            ).strip()
+            if not previous:
+                continue
+            similarity = SequenceMatcher(None, proposed, previous).ratio()
+            previous_tokens = set(previous.split())
+            union = proposed_tokens | previous_tokens
+            overlap = len(proposed_tokens & previous_tokens) / len(union) if union else 0
+            previous_meaning = previous_tokens - filler_words
+            smaller_meaning = min(len(proposed_meaning), len(previous_meaning))
+            meaning_containment = (
+                len(proposed_meaning & previous_meaning) / smaller_meaning
+                if smaller_meaning else 0
+            )
+            if similarity >= 0.78 or overlap >= 0.72 or meaning_containment >= 0.8:
+                return True
+        return False
     
     def ingest(
         self,
@@ -262,9 +506,71 @@ class RAGEngine:
             )
 
         started = perf_counter()
-        request_analysis = self._analyze_request(question, history or [])
+        base_standalone_question = self._standalone_question(question, history or [])
+        mark("standalone_question", started)
+
+        started = perf_counter()
+        preliminary_candidates = self.store.hybrid_query(
+            company_id,
+            base_standalone_question,
+            min(max(k, 8), 12),
+        )
+        mark("catalog_retrieval", started)
+
+        started = perf_counter()
+        catalog_context = self._catalog_context(preliminary_candidates)
+        request_analysis = self._analyze_request(
+            question,
+            history or [],
+            catalog_context,
+        )
         mark("request_analysis", started)
         retrieval_stats["intent"] = request_analysis["intent"]
+        retrieval_stats["known_requirement_count"] = len(
+            request_analysis["known_requirements"]
+        )
+        retrieval_stats["missing_requirements"] = ", ".join(
+            request_analysis["missing_requirements"]
+        )[:500]
+        clarification_rounds = self._clarification_round_count(history or [])
+        repeated_clarification = self._is_repeated_clarification(
+            request_analysis["clarification_question"], history or []
+        )
+        if (
+            repeated_clarification
+            and clarification_rounds < settings.max_clarification_rounds
+        ):
+            retry_analysis = self._analyze_request(
+                question,
+                history or [],
+                catalog_context,
+                avoid_question=request_analysis["clarification_question"],
+            )
+            retry_repeated = self._is_repeated_clarification(
+                retry_analysis["clarification_question"], history or []
+            )
+            if retry_repeated:
+                retry_analysis["sufficient"] = False
+                retry_analysis["clarification_question"] = self._fallback_clarification(
+                    retry_analysis["missing_requirements"]
+                    or request_analysis["missing_requirements"]
+                )
+                retry_analysis["clarification_options"] = []
+            request_analysis = retry_analysis
+            repeated_clarification = False
+            retrieval_stats["intent"] = request_analysis["intent"]
+            retrieval_stats["known_requirement_count"] = len(
+                request_analysis["known_requirements"]
+            )
+            retrieval_stats["missing_requirements"] = ", ".join(
+                request_analysis["missing_requirements"]
+            )[:500]
+        clarification_exhausted = (
+            clarification_rounds >= settings.max_clarification_rounds
+            or repeated_clarification
+        )
+        retrieval_stats["clarification_rounds"] = clarification_rounds
+        retrieval_stats["clarification_exhausted"] = clarification_exhausted
         if request_analysis["no_more_information"]:
             timings["total"] = int((perf_counter() - query_started) * 1000)
             return QueryResponse(
@@ -278,7 +584,7 @@ class RAGEngine:
                     retrieval=retrieval_stats,
                 ),
             )
-        if not request_analysis["sufficient"]:
+        if not request_analysis["sufficient"] and not clarification_exhausted:
             suggestions = [
                 ClarificationSuggestion(label=option["label"], message=option["message"])
                 for option in request_analysis["clarification_options"]
@@ -302,13 +608,19 @@ class RAGEngine:
             )
 
         started = perf_counter()
-        standalone_question = self._standalone_question(question, history or [])
+        standalone_question = base_standalone_question
         if request_analysis["scenario_summary"]:
             standalone_question = (
                 f"{standalone_question}\nCustomer scenario and constraints: "
                 f"{request_analysis['scenario_summary']}"
             )
-        mark("standalone_question", started)
+        if clarification_exhausted:
+            standalone_question = (
+                f"{standalone_question}\nThe clarification limit has been reached. "
+                "Do not ask another question. Use the known requirements and give the "
+                "best-supported result, stating assumptions or missing constraints."
+            )
+        mark("scenario_question", started)
 
         started = perf_counter()
         queries = []
@@ -321,6 +633,9 @@ class RAGEngine:
         candidate_k = max(k, settings.retrieval_candidates)
         per_query_k = max(6, candidate_k // len(queries))
         seen = {}
+        for chunk in preliminary_candidates:
+            key = (chunk["document_id"], chunk.get("page_number"), chunk["content"][:80])
+            seen[key] = chunk
         started = perf_counter()
         for q in queries:
             for chunk in self.store.hybrid_query(company_id, q, per_query_k):
@@ -350,6 +665,21 @@ class RAGEngine:
         mark("neighbor_expansion", started)
         
 
+        if not retrieved and clarification_exhausted:
+            timings["total"] = int((perf_counter() - query_started) * 1000)
+            return QueryResponse(
+                answer=(
+                    "I couldn't identify a reliable product match from the indexed documents "
+                    "using the information provided. I won't keep asking the same questions; "
+                    "a product model, system specification, or required compatibility would be "
+                    "needed for a reliable recommendation."
+                ),
+                sources=[],
+                diagnostics=QueryDiagnostics(
+                    timings_ms=timings,
+                    retrieval=retrieval_stats,
+                ),
+            )
         if not retrieved:
             suggestions = self._clarification_suggestions(question, candidates)
             return QueryResponse(
@@ -383,7 +713,13 @@ class RAGEngine:
                         f"Conversation so far:\n{conversation}\n"
                         f"user: {question}\n\n"
                         f"Knowledge-base context:\n{context}\n\n"
-                        f"Standalone search question: {standalone_question}"
+                        f"Standalone search question: {standalone_question}\n\n"
+                        + (
+                            "Response requirement: the customer has completed the maximum "
+                            "clarification rounds. Do not ask another question. Give the best "
+                            "supported recommendation and explicitly state assumptions or gaps."
+                            if clarification_exhausted else ""
+                        )
                     ),
                 },
             ],
@@ -393,14 +729,36 @@ class RAGEngine:
 
         answer = response.choices[0].message.content or ""
         started = perf_counter()
-        answer = self._verify_answer(standalone_question, context, answer)
+        answer = self._verify_answer(
+            standalone_question,
+            context,
+            answer,
+            allow_clarification=not clarification_exhausted,
+        )
+        answer = self._remove_verifier_commentary(answer)
         if self._is_unsupported_answer(answer):
-            suggestions = self._clarification_suggestions(question, candidates)
-            return QueryResponse(
-                answer=self._clarification_answer(suggestions),
-                sources=[],
-                suggestions=suggestions,
-            )
+            if clarification_exhausted:
+                answer = (
+                    "I couldn't make a reliable recommendation from the indexed documents "
+                    "with the requirements provided. I won't repeat the same clarification "
+                    "questions; please provide a model or compatibility specification when available."
+                )
+            else:
+                suggestions = self._clarification_suggestions(question, candidates)
+                return QueryResponse(
+                    answer=self._clarification_answer(suggestions),
+                    sources=[],
+                    suggestions=suggestions,
+                )
+        cited_indices = {
+            int(index)
+            for index in re.findall(r"\[Source\s+(\d+)\]", answer, flags=re.I)
+            if 1 <= int(index) <= len(retrieved)
+        }
+        cited_retrieved = [
+            chunk for index, chunk in enumerate(retrieved, 1)
+            if index in cited_indices
+        ]
         sources = [
             SourceChunk(
                 document_id=c["document_id"],
@@ -409,7 +767,7 @@ class RAGEngine:
                 score=c["score"],
                 page_number=c.get("page_number"),
             )
-            for c in retrieved
+            for c in cited_retrieved
         ]
 
         timings["total"] = int((perf_counter() - query_started) * 1000)
@@ -433,6 +791,22 @@ class RAGEngine:
         return bool(re.search(r"\bi (?:don't|do not) have\b", normalized)) or any(
             phrase in normalized for phrase in unsupported_phrases
         )
+
+    @staticmethod
+    def _remove_verifier_commentary(answer: str) -> str:
+        """Remove accidental internal editing notes from a customer-facing answer."""
+        cleaned = re.sub(
+            r"(?im)(?:^|(?<=[.!?]))\s*[^.!?\n]*(?:"
+            r"unsupported in (?:the )?(?:provided|supplied) context|"
+            r"should be removed|should be omitted"
+            r")[^.!?\n]*[.!?]?",
+            " ",
+            answer,
+        )
+        cleaned = re.sub(r"(?im)^.*(?:draft answer|verified answer).*$", "", cleaned)
+        cleaned = re.sub(r"[ \t]+\n", "\n", cleaned)
+        cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+        return cleaned.strip()
 
     def _clarification_suggestions(
         self, question: str, candidates: list[dict]
@@ -512,9 +886,22 @@ class RAGEngine:
         except Exception:
             return question
 
-    def _verify_answer(self, question: str, context: str, answer: str) -> str:
+    def _verify_answer(
+        self,
+        question: str,
+        context: str,
+        answer: str,
+        allow_clarification: bool = True,
+    ) -> str:
         if not settings.enable_answer_verification or not answer.strip():
             return answer
+        verification_policy = (
+            "If the context does not answer the question, ask for the smallest useful "
+            "detail needed to identify the right product or document section."
+            if allow_clarification
+            else "Do not ask another question. If a reliable match cannot be made, say so "
+            "and summarize only the closest result supported by the context."
+        )
         try:
             response = self.openai.chat.completions.create(
                 model=settings.openai_chat_model,
@@ -522,12 +909,16 @@ class RAGEngine:
                     "role": "user",
                     "content": (
                         "Verify the draft answer strictly against the supplied context. "
-                        "Remove or correct every unsupported factual claim. Preserve valid "
-                        "[Source N] citations and do not add outside knowledge. If the "
+                        "Remove or correct every unsupported factual claim. Add the correct "
+                        "[Source N] citation to every retained factual product or service claim. "
+                        "Do not add outside knowledge. A source may "
+                        "support claims only about the same named product or service described "
+                        "in that source block. Return only the revised customer-facing answer. "
+                        "Silently remove unsupported material; never mention verification, the "
+                        "draft, supplied context, unsupported claims, or what was removed. If the "
                         "draft asks concise clarification questions and makes no product "
-                        "claims, preserve those questions. Otherwise, if the context does "
-                        "not answer the question, ask the customer for the smallest useful "
-                        "detail needed to identify the right product or document section.\n\n"
+                        "claims, preserve those questions only when clarification is allowed. "
+                        f"{verification_policy}\n\n"
                         f"Question:\n{question}\n\nContext:\n{context}\n\n"
                         f"Draft answer:\n{answer}\n\nVerified answer:"
                     ),
@@ -556,7 +947,8 @@ class RAGEngine:
             return candidates[:limit]
         try:
             listing = "\n\n".join(
-                f"[{i}] {item['content'][:1200]}"
+                f"[{i}] Document: {item.get('document_name', 'Unknown')}\n"
+                f"{item['content'][:1200]}"
                 for i, item in enumerate(candidates)
             )
             response = self.openai.chat.completions.create(
@@ -564,7 +956,11 @@ class RAGEngine:
                 messages=[{
                     "role": "user",
                     "content": (
-                        "Select the context chunks that directly help answer the question. "
+                        "Select only context chunks that directly help answer the question. "
+                        "Reject chunks from unrelated subjects even if they share generic words. "
+                        "For product or service recommendations, retain only chunks that describe "
+                        "a candidate matching an explicit customer requirement. Return [] when no "
+                        "chunk is directly relevant. "
                         f"Return at most {limit} chunk numbers, best first, as a JSON array "
                         "of integers only.\n\n"
                         f"Question: {question}\n\nChunks:\n{listing}"
@@ -579,6 +975,6 @@ class RAGEngine:
                 candidates[i] for i in indices
                 if isinstance(i, int) and 0 <= i < len(candidates)
             ]
-            return selected[:limit] or candidates[:limit]
+            return selected[:limit]
         except Exception:
             return candidates[:limit]
