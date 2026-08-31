@@ -15,7 +15,8 @@ class Settings(BaseSettings):
     minimum_relevance_score: float = 0.25
     enable_reranking: bool = True
     enable_answer_verification: bool = True
-    conversation_history_messages: int = 6
+    conversation_history_messages: int = 16
+    max_clarification_rounds: int = 2
     neighbor_chunks: int = 1
     enable_multilingual_search: bool = True
     enable_local_cross_encoder: bool = False

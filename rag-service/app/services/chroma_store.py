@@ -83,7 +83,9 @@ class ChromaStore:
         batch_size = max(1, settings.vector_store_batch_size)
         for start in range(0, len(chunks), batch_size):
             end = start + batch_size
-            collection.add(
+            # Reindexing can overlap with an earlier request. Upsert keeps the
+            # operation idempotent and refreshes existing chunk IDs safely.
+            collection.upsert(
                 ids=ids[start:end],
                 embeddings=embeddings[start:end],
                 documents=contents[start:end],

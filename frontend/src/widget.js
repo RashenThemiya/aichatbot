@@ -155,13 +155,13 @@ function messageNode(role, text, sources = [], feedbackOptions = null, suggestio
       button.textContent = suggestion.label;
       button.addEventListener("click", () => {
         choices.querySelectorAll("button").forEach((item) => { item.disabled = true; });
-        feedbackOptions?.onSuggestion?.(suggestion.message);
+        feedbackOptions?.onSuggestion?.(suggestion.message, suggestion.label);
       });
       choices.appendChild(button);
     }
     node.appendChild(choices);
   }
-  if (role !== "user" && feedbackOptions) {
+  if (role !== "user" && feedbackOptions && suggestions.length === 0) {
     const feedback = document.createElement("div");
     feedback.className = "ragw-feedback";
     feedback.appendChild(document.createTextNode("Was this helpful?"));
@@ -255,10 +255,10 @@ function initWidget(options = {}) {
   const send = root.querySelector(".ragw-send");
   const toggle = root.querySelector(".ragw-button");
 
-  async function submitMessage(text) {
+  async function submitMessage(text, displayText = text) {
     if (!text) return;
     input.value = "";
-    messages.appendChild(messageNode("user", text));
+    messages.appendChild(messageNode("user", displayText));
     messages.scrollTop = messages.scrollHeight;
     send.disabled = true;
     const typing = typingNode();
@@ -273,7 +273,7 @@ function initWidget(options = {}) {
         result.sources || [],
         {
           onFeedback: (feedback) => sendFeedback(config, result.conversationId, feedback),
-          onSuggestion: submitMessage,
+          onSuggestion: (message, label) => submitMessage(message, label),
         },
         result.suggestions || []
       ));
