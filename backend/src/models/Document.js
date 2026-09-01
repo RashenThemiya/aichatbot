@@ -41,6 +41,9 @@ const documentSchema = new mongoose.Schema(
       type: String,
       default: null,
     },
+    documentVersion: { type: String, default: "1" },
+    effectiveDate: { type: Date, default: null },
+    isActive: { type: Boolean, default: true, index: true },
   },
   { timestamps: true }
 );
