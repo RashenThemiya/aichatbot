@@ -45,6 +45,17 @@ async function request(path, options = {}) {
   return data;
 }
 
+async function download(path) {
+  const headers = new Headers();
+  if (authToken) headers.set("Authorization", `Bearer ${authToken}`);
+  const response = await fetch(`${API_BASE_URL}${path}`, { headers });
+  if (!response.ok) {
+    const data = await response.json().catch(() => null);
+    throw new Error(data?.error || data?.detail || "Download failed");
+  }
+  return response.blob();
+}
+
 export const api = {
   baseUrl: API_BASE_URL,
   health: () => request("/health"),
@@ -152,6 +163,8 @@ export const api = {
   },
   documents: {
     list: (companyId) => request(`/api/companies/${companyId}/documents`),
+    download: (companyId, documentId) =>
+      download(`/api/companies/${companyId}/documents/${documentId}/download`),
     upload: (companyId, files) => {
       const formData = new FormData();
       const [file] = Array.from(files);

@@ -3,6 +3,7 @@ import {
   Bot,
   Building2,
   CheckCircle2,
+  Download,
   FileText,
   History,
   Loader2,
@@ -163,6 +164,7 @@ export default function App() {
     health: false,
     companies: false,
     documents: false,
+    download: false,
     upload: false,
     chat: false,
     widgetTest: false,
@@ -1160,6 +1162,32 @@ ${widgetScriptSrc()}`;
       setSelectedDocumentIds([]);
       await loadDocuments();
     }
+  }
+
+  async function handleBulkDownloadDocuments() {
+    if (!selectedCompany || selectedDocumentIds.length === 0) return;
+    const selectedDocuments = documents.filter((document) =>
+      selectedDocumentIds.includes(document._id)
+    );
+    const result = await runTask(
+      "download",
+      async () => {
+        for (const document of selectedDocuments) {
+          const blob = await api.documents.download(selectedCompany._id, document._id);
+          const url = URL.createObjectURL(blob);
+          const link = window.document.createElement("a");
+          link.href = url;
+          link.download = document.originalName.split(/[\\/]/).pop() || "document.pdf";
+          window.document.body.appendChild(link);
+          link.click();
+          link.remove();
+          URL.revokeObjectURL(url);
+        }
+        return true;
+      },
+      `${selectedDocuments.length} document${selectedDocuments.length === 1 ? "" : "s"} downloaded`
+    );
+    if (result) setSelectedDocumentIds([]);
   }
 
   async function handleDeleteAllDocuments() {
@@ -2500,6 +2528,17 @@ ${widgetScriptSrc()}`;
                       {selectedDocumentIds.length > 0 && (
                         <button
                           type="button"
+                          onClick={handleBulkDownloadDocuments}
+                          disabled={loading.download}
+                          className="inline-flex items-center justify-center gap-2 px-3 text-sm font-semibold transition bg-white border rounded shadow-sm h-9 border-slate-200 text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {loading.download ? <Loader2 className="animate-spin" size={16} /> : <Download size={16} />}
+                          Download selected ({selectedDocumentIds.length})
+                        </button>
+                      )}
+                      {selectedDocumentIds.length > 0 && (
+                        <button
+                          type="button"
                           onClick={handleBulkDeleteDocuments}
                           disabled={loading.documents}
                           className="inline-flex items-center justify-center gap-2 px-3 text-sm font-semibold transition bg-white border rounded shadow-sm h-9 border-rose-200 text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
@@ -2577,6 +2616,7 @@ ${widgetScriptSrc()}`;
                               className="w-4 h-4 rounded border-slate-300"
                             />
                           </th>
+                          <th className="w-16 px-4 py-3">No.</th>
                           <th className="px-4 py-3">File</th>
                           <th className="px-4 py-3">Status</th>
                           <th className="px-4 py-3">Chunks</th>
@@ -2587,12 +2627,12 @@ ${widgetScriptSrc()}`;
                       <tbody className="divide-y divide-slate-100">
                         {documents.length === 0 ? (
                           <tr>
-                            <td className="px-4 py-8 text-center text-slate-500" colSpan={6}>
+                            <td className="px-4 py-8 text-center text-slate-500" colSpan={7}>
                               No documents uploaded.
                             </td>
                           </tr>
                         ) : (
-                          documents.map((document) => (
+                          documents.map((document, index) => (
                             <tr key={document._id}>
                               <td className="w-12 px-4 py-3">
                                 <input
@@ -2603,6 +2643,7 @@ ${widgetScriptSrc()}`;
                                   className="w-4 h-4 rounded border-slate-300"
                                 />
                               </td>
+                              <td className="w-16 px-4 py-3 font-medium tabular-nums text-slate-500">{index + 1}</td>
                               <td className="max-w-[320px] px-4 py-3">
                                 <div className="font-medium truncate text-slate-900">{document.originalName}</div>
                                 {document.indexError && (

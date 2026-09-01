@@ -184,6 +184,25 @@ router.get("/", async (req, res) => {
   }
 });
 
+router.get("/:documentId/download", async (req, res) => {
+  try {
+    const doc = await Document.findOne({
+      _id: req.params.documentId,
+      companyId: req.params.companyId,
+    });
+    if (!doc) {
+      return res.status(404).json({ error: "Document not found" });
+    }
+    if (!fs.existsSync(doc.filePath)) {
+      return res.status(404).json({ error: "Document file not found" });
+    }
+
+    res.download(doc.filePath, path.basename(doc.originalName));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get("/:documentId", async (req, res) => {
   try {
     const doc = await Document.findOne({
