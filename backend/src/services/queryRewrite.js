@@ -23,6 +23,10 @@ Rules:
 - reply must be one short friendly sentence for greeting, introduction, thanks, or goodbye.
 - Do not answer support questions in reply; only set correctedQuestion.`;
 
+const SOCIAL_STYLE_PROMPT = `Keep social replies warm, natural, and concise. Use conversational
+wording and contractions where appropriate. Avoid robotic phrases and do not mention documents
+or the knowledge base in a social reply.`;
+
 function logAnalyze(original, result, reason) {
   if (!isDev) return;
   if (reason) {
@@ -81,7 +85,7 @@ async function analyzeUserMessage(message) {
         temperature: 0,
         response_format: { type: "json_object" },
         messages: [
-          { role: "system", content: SYSTEM_PROMPT },
+          { role: "system", content: `${SYSTEM_PROMPT}\n\n${SOCIAL_STYLE_PROMPT}` },
           { role: "user", content: original },
         ],
       },

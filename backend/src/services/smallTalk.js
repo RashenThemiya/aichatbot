@@ -47,17 +47,17 @@ function getSmallTalkReply(message) {
 
   if (GREETING.test(text)) {
     if (/^how\s+are\s+you/i.test(text)) {
-      return "I'm doing well, thank you! How can I help you today?";
+      return "I'm doing well, thanks for asking! What can I help you with today?";
     }
-    return "Hello! How can I help you today? Ask me anything from our support documents.";
+    return "Hi there! What can I help you with today?";
   }
 
   if (THANKS.test(text)) {
-    return "You're welcome! Let me know if you need anything else.";
+    return "You're very welcome! Is there anything else you'd like help with?";
   }
 
   if (GOODBYE.test(text)) {
-    return "Goodbye! Feel free to message again if you need help.";
+    return "Take care! I'm here whenever you need help.";
   }
 
   return null;
