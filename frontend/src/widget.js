@@ -5,11 +5,13 @@ const DEFAULTS = {
   subtitle: "Ask from our knowledge base",
   accentColor: "#111827",
   headerColor: "",
+  headerTextColor: "",
   sendButtonColor: "",
   launcherColor: "",
   launcherIcon: "bot",
   position: "right",
   apiKey: "",
+  showFeedback: false,
 };
 
 function getSessionId(companyId) {
@@ -60,6 +62,7 @@ function createStyle(config) {
   const side = config.position === "left" ? "left" : "right";
   const accentColor = normalizeColor(config.accentColor, "#111827");
   const headerColor = normalizeColor(config.headerColor, accentColor);
+  const headerTextColor = normalizeColor(config.headerTextColor, "#ffffff");
   const sendButtonColor = normalizeColor(config.sendButtonColor, accentColor);
   const launcherColor = normalizeColor(config.launcherColor, accentColor);
   style.textContent = `
@@ -69,9 +72,11 @@ function createStyle(config) {
     .ragw-launcher-svg{width:29px;height:29px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
     .ragw-panel{display:none;width:min(380px,calc(100vw - 32px));height:min(620px,calc(100vh - 104px));margin-bottom:14px;border:1px solid #d9e0ea;border-radius:10px;background:#fff;box-shadow:0 24px 70px rgba(15,23,42,.24);overflow:hidden}
     .ragw-open .ragw-panel{display:flex;flex-direction:column}
-    .ragw-header{background:${headerColor};color:#fff;padding:14px 16px}
+    .ragw-header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;background:${headerColor};color:${headerTextColor};padding:14px 16px}
+    .ragw-header-copy{min-width:0}
     .ragw-title{font-size:15px;font-weight:800;margin:0}
     .ragw-subtitle{font-size:12px;opacity:.82;margin:3px 0 0}
+    .ragw-close{display:grid;flex:0 0 auto;width:28px;height:28px;padding:0;border:0;border-radius:999px;background:transparent;color:inherit;font-size:22px;line-height:1;cursor:pointer;place-items:center}.ragw-close:hover{background:rgba(127,127,127,.14)}
     .ragw-messages{flex:1;overflow:auto;padding:14px;background:#f6f8fb}
     .ragw-msg{max-width:88%;padding:11px 13px;margin:0 0 12px;border-radius:12px;font-size:14px;line-height:1.55;box-shadow:0 2px 8px rgba(15,23,42,.05)}
     .ragw-user{margin-left:auto;background:${sendButtonColor};color:#fff}
@@ -161,7 +166,11 @@ function messageNode(role, text, sources = [], feedbackOptions = null, suggestio
     }
     node.appendChild(choices);
   }
-  if (role !== "user" && feedbackOptions && suggestions.length === 0) {
+  if (
+    role !== "user"
+    && feedbackOptions?.showFeedback
+    && suggestions.length === 0
+  ) {
     const feedback = document.createElement("div");
     feedback.className = "ragw-feedback";
     feedback.appendChild(document.createTextNode("Was this helpful?"));
@@ -209,6 +218,20 @@ async function sendMessage(config, message, sessionId) {
   return data;
 }
 
+async function loadHistory(config, sessionId) {
+  const response = await fetch(
+    `${config.apiBaseUrl}/widget/companies/${config.companyId}/chat/history/${encodeURIComponent(sessionId)}`,
+    {
+      headers: {
+        "X-Widget-API-Key": config.apiKey,
+      },
+    }
+  );
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || "Chat history request failed");
+  return data;
+}
+
 async function sendFeedback(config, conversationId, feedback) {
   if (!conversationId) return;
   await fetch(`${config.apiBaseUrl}/widget/companies/${config.companyId}/chat/feedback`, {
@@ -235,8 +258,11 @@ function initWidget(options = {}) {
   root.innerHTML = `
     <section class="ragw-panel">
       <header class="ragw-header">
-        <p class="ragw-title"></p>
-        <p class="ragw-subtitle"></p>
+        <div class="ragw-header-copy">
+          <p class="ragw-title"></p>
+          <p class="ragw-subtitle"></p>
+        </div>
+        <button class="ragw-close" type="button" aria-label="Close chat">&times;</button>
       </header>
       <div class="ragw-messages"></div>
       <form class="ragw-form">
@@ -254,9 +280,13 @@ function initWidget(options = {}) {
   const form = root.querySelector(".ragw-form");
   const send = root.querySelector(".ragw-send");
   const toggle = root.querySelector(".ragw-button");
+  const close = root.querySelector(".ragw-close");
+  let historyReady = false;
+  input.disabled = true;
+  send.disabled = true;
 
   async function submitMessage(text, displayText = text) {
-    if (!text) return;
+    if (!text || !historyReady) return;
     input.value = "";
     messages.appendChild(messageNode("user", displayText));
     messages.scrollTop = messages.scrollHeight;
@@ -272,6 +302,7 @@ function initWidget(options = {}) {
         result.answer,
         result.sources || [],
         {
+          showFeedback: config.showFeedback,
           onFeedback: (feedback) => sendFeedback(config, result.conversationId, feedback),
           onSuggestion: (message, label) => submitMessage(message, label),
         },
@@ -286,14 +317,57 @@ function initWidget(options = {}) {
     }
   }
 
-  messages.appendChild(messageNode("bot", config.greeting || "Hi, how can I help?"));
   toggle.addEventListener("click", () => root.classList.toggle("ragw-open"));
+  close.addEventListener("click", () => root.classList.remove("ragw-open"));
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     await submitMessage(input.value.trim());
   });
 
   document.body.appendChild(root);
+
+  async function restoreConversation() {
+    const loading = typingNode();
+    messages.appendChild(loading);
+    try {
+      const history = await loadHistory(config, sessionId);
+      loading.remove();
+      const savedMessages = Array.isArray(history.messages) ? history.messages : [];
+      if (!savedMessages.length) {
+        messages.appendChild(messageNode("bot", config.greeting || "Hi, how can I help?"));
+        return;
+      }
+
+      for (const savedMessage of savedMessages) {
+        const isAssistant = savedMessage.role === "assistant";
+        messages.appendChild(messageNode(
+          savedMessage.role,
+          savedMessage.content,
+          savedMessage.sources || [],
+          isAssistant
+            ? {
+                showFeedback: config.showFeedback,
+                onFeedback: (feedback) => sendFeedback(config, history._id, feedback),
+              }
+            : null
+        ));
+      }
+    } catch (error) {
+      loading.remove();
+      console.warn("[RAG Widget] Unable to restore chat history", error);
+      messages.appendChild(messageNode(
+        "bot",
+        "I couldn't load your earlier messages, but you can start a new chat here."
+      ));
+    } finally {
+      historyReady = true;
+      input.disabled = false;
+      send.disabled = false;
+      messages.scrollTop = messages.scrollHeight;
+    }
+  }
+
+  restoreConversation();
 }
 
 window.RAGChatWidget = { init: initWidget };

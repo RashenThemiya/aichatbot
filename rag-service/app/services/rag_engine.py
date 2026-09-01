@@ -39,6 +39,9 @@ Conversation style:
 - Do not repeat a greeting, apology, or closing in every answer. Avoid filler, excessive enthusiasm, and unnecessary emojis.
 - Ask one natural follow-up question only when more information would materially improve the answer.
 - Match the customer's language where practical. Never sacrifice accuracy or invent details just to sound conversational.
+- Treat every reply as the next turn in a real conversation: respond to what the person actually said instead of restating their question.
+- Avoid formal headings such as "Answer", "Response", or "Conclusion" for simple replies, and never refer to the person as "the customer".
+- Vary transitions and sentence openings naturally so replies do not feel copied from a fixed template.
 
 Product recommendation behavior:
 - First identify every product in the supplied context that plausibly matches the customer's words. Treat model names, product codes, aliases, and close spelling variations as product identifiers.
@@ -680,10 +683,9 @@ class RAGEngine:
             timings["total"] = int((perf_counter() - query_started) * 1000)
             return QueryResponse(
                 answer=(
-                    "I couldn't identify a reliable product match from the indexed documents "
-                    "using the information provided. I won't keep asking the same questions; "
-                    "a product model, system specification, or required compatibility would be "
-                    "needed for a reliable recommendation."
+                    "I don't have enough confirmed information to recommend one confidently. "
+                    "If you can share the product model, system specification, or required "
+                    "compatibility later, I'll be able to narrow it down."
                 ),
                 sources=[],
                 diagnostics=QueryDiagnostics(
@@ -750,9 +752,9 @@ class RAGEngine:
         if self._is_unsupported_answer(answer):
             if clarification_exhausted:
                 answer = (
-                    "I couldn't make a reliable recommendation from the indexed documents "
-                    "with the requirements provided. I won't repeat the same clarification "
-                    "questions; please provide a model or compatibility specification when available."
+                    "I don't have enough confirmed information to make a confident recommendation "
+                    "yet. When you have the product model or compatibility details, share them "
+                    "with me and I'll help you narrow it down."
                 )
             else:
                 suggestions = self._clarification_suggestions(question, candidates)
@@ -849,9 +851,8 @@ class RAGEngine:
                 ClarificationSuggestion(
                     label=label,
                     message=(
-                        "Regarding my earlier question, I mean this related information: "
-                        f"{excerpt}. Please answer the original question only if this "
-                        "document text supports it."
+                        "I meant this related topic: "
+                        f"{excerpt}. Please use it to answer my original question."
                     ),
                 )
             )
@@ -863,12 +864,12 @@ class RAGEngine:
     def _clarification_answer(suggestions: list[ClarificationSuggestion]) -> str:
         if suggestions:
             return (
-                "I couldn't verify an answer from the documents yet. "
-                "Please choose the closest related topic below, or add a little more detail."
+                "I want to make sure I've understood you correctly. "
+                "Which of these is closest to what you mean? You can also add a little more detail."
             )
         return (
-            "I couldn't verify that from the indexed documents. Please provide the "
-            "product model, a related document name, or another detail so I can search again."
+            "I want to make sure I give you the right answer. Could you share the "
+            "product model, a related document name, or one more detail?"
         )
 
     def _standalone_question(self, question: str, history: list[str]) -> str:
