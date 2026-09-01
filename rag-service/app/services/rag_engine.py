@@ -29,6 +29,20 @@ Rules:
 - Adapt the response to the request type: answer factual questions directly, compare named products side by side, recommend from stated needs and constraints, and provide ordered diagnosis for troubleshooting.
 - For scenario questions, explicitly connect each recommendation or instruction to the customer's stated conditions.
 
+Conversation style:
+- Write like a friendly, knowledgeable human support assistant. Keep the tone warm, calm, and professional.
+- Use natural wording and contractions such as "I'll", "you're", and "that's" where they fit.
+- Give the direct answer first, then add only the details that help the customer act on it.
+- When the customer describes a problem, briefly acknowledge it before giving the solution, but do not over-apologize.
+- Prefer simple words, short paragraphs, and clear sentences. Use bullets or numbered steps only when they improve readability.
+- Never use internal or robotic phrases such as "the supplied context states", "the context indicates", or "based on the retrieved chunks".
+- Do not repeat a greeting, apology, or closing in every answer. Avoid filler, excessive enthusiasm, and unnecessary emojis.
+- Ask one natural follow-up question only when more information would materially improve the answer.
+- Match the customer's language where practical. Never sacrifice accuracy or invent details just to sound conversational.
+- Treat every reply as the next turn in a real conversation: respond to what the person actually said instead of restating their question.
+- Avoid formal headings such as "Answer", "Response", or "Conclusion" for simple replies, and never refer to the person as "the customer".
+- Vary transitions and sentence openings naturally so replies do not feel copied from a fixed template.
+
 Product recommendation behavior:
 - First identify every product in the supplied context that plausibly matches the customer's words. Treat model names, product codes, aliases, and close spelling variations as product identifiers.
 - Distinguish an ambiguous product reference from a recommendation scenario. A phrase such as "that model" or an incomplete product name is ambiguous; a description of the customer's use case, problem, preferences, budget, or constraints is a recommendation scenario.
@@ -669,10 +683,9 @@ class RAGEngine:
             timings["total"] = int((perf_counter() - query_started) * 1000)
             return QueryResponse(
                 answer=(
-                    "I couldn't identify a reliable product match from the indexed documents "
-                    "using the information provided. I won't keep asking the same questions; "
-                    "a product model, system specification, or required compatibility would be "
-                    "needed for a reliable recommendation."
+                    "I don't have enough confirmed information to recommend one confidently. "
+                    "If you can share the product model, system specification, or required "
+                    "compatibility later, I'll be able to narrow it down."
                 ),
                 sources=[],
                 diagnostics=QueryDiagnostics(
@@ -723,7 +736,7 @@ class RAGEngine:
                     ),
                 },
             ],
-            temperature=0,
+            temperature=0.2,
         )
         mark("answer_generation", started)
 
@@ -739,9 +752,9 @@ class RAGEngine:
         if self._is_unsupported_answer(answer):
             if clarification_exhausted:
                 answer = (
-                    "I couldn't make a reliable recommendation from the indexed documents "
-                    "with the requirements provided. I won't repeat the same clarification "
-                    "questions; please provide a model or compatibility specification when available."
+                    "I don't have enough confirmed information to make a confident recommendation "
+                    "yet. When you have the product model or compatibility details, share them "
+                    "with me and I'll help you narrow it down."
                 )
             else:
                 suggestions = self._clarification_suggestions(question, candidates)
@@ -838,9 +851,8 @@ class RAGEngine:
                 ClarificationSuggestion(
                     label=label,
                     message=(
-                        "Regarding my earlier question, I mean this related information: "
-                        f"{excerpt}. Please answer the original question only if this "
-                        "document text supports it."
+                        "I meant this related topic: "
+                        f"{excerpt}. Please use it to answer my original question."
                     ),
                 )
             )
@@ -852,12 +864,12 @@ class RAGEngine:
     def _clarification_answer(suggestions: list[ClarificationSuggestion]) -> str:
         if suggestions:
             return (
-                "I couldn't verify an answer from the documents yet. "
-                "Please choose the closest related topic below, or add a little more detail."
+                "I want to make sure I've understood you correctly. "
+                "Which of these is closest to what you mean? You can also add a little more detail."
             )
         return (
-            "I couldn't verify that from the indexed documents. Please provide the "
-            "product model, a related document name, or another detail so I can search again."
+            "I want to make sure I give you the right answer. Could you share the "
+            "product model, a related document name, or one more detail?"
         )
 
     def _standalone_question(self, question: str, history: list[str]) -> str:
@@ -911,6 +923,9 @@ class RAGEngine:
                         "Verify the draft answer strictly against the supplied context. "
                         "Remove or correct every unsupported factual claim. Add the correct "
                         "[Source N] citation to every retained factual product or service claim. "
+                        "Preserve a friendly, natural, concise customer-support tone while editing. "
+                        "Use direct wording and contractions where appropriate, and do not make the "
+                        "answer sound like a report or mention documents unless the customer asks. "
                         "Do not add outside knowledge. A source may "
                         "support claims only about the same named product or service described "
                         "in that source block. Return only the revised customer-facing answer. "
