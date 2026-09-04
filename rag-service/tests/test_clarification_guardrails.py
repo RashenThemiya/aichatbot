@@ -5,6 +5,35 @@ from app.services.rag_engine import RAGEngine
 
 
 class ClarificationGuardrailTests(unittest.TestCase):
+    def test_only_fully_unclear_questions_allow_choice_buttons(self):
+        self.assertTrue(RAGEngine._is_fully_unclear_question("Tell me more"))
+        self.assertTrue(RAGEngine._is_fully_unclear_question("What about that one?"))
+        self.assertFalse(RAGEngine._is_fully_unclear_question(
+            "What is the warranty period for Model X?"
+        ))
+        self.assertFalse(RAGEngine._is_fully_unclear_question(
+            "Which panel is best for a 10 kW off-grid system?"
+        ))
+
+    def test_common_factual_forms_bypass_clarification(self):
+        factual_questions = [
+            "What is the warranty period for IC1220100?",
+            "Does model IC1230150 use a 450A fuse?",
+            "Can the controller operate in harsh environments?",
+            "How much charging current does IC122055I provide?",
+            "Where is the communication port?",
+            "Which port connects the BTS cable?",
+            "What is the difference between IC121040 and IC121040I?",
+        ]
+
+        for question in factual_questions:
+            with self.subTest(question=question):
+                self.assertTrue(RAGEngine._is_clear_factual_question(question))
+
+        self.assertFalse(RAGEngine._is_clear_factual_question(
+            "Which controller is best for my off-grid system?"
+        ))
+
     def test_question_payload_is_removed(self):
         options = RAGEngine._sanitize_clarification_options(
             "What will you use the product for?",
@@ -156,11 +185,11 @@ class ClarificationGuardrailTests(unittest.TestCase):
                 return True
 
             @staticmethod
-            def hybrid_query(_company_id, _question, _limit):
+            def hybrid_query(_company_id, _question, _limit, **_kwargs):
                 return []
 
             @staticmethod
-            def expand_neighbors(_company_id, retrieved, _neighbor_chunks):
+            def expand_neighbors(_company_id, retrieved, _neighbor_chunks, **_kwargs):
                 return retrieved
 
         engine = RAGEngine.__new__(RAGEngine)
@@ -209,7 +238,7 @@ class ClarificationGuardrailTests(unittest.TestCase):
                 return True
 
             @staticmethod
-            def hybrid_query(_company_id, _question, _limit):
+            def hybrid_query(_company_id, _question, _limit, **_kwargs):
                 return []
 
         analysis = {

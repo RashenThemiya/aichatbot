@@ -198,7 +198,7 @@ function typingNode() {
   return node;
 }
 
-async function sendMessage(config, message, sessionId) {
+async function sendMessage(config, message, sessionId, { isSuggestion = false } = {}) {
   const response = await fetch(`${config.apiBaseUrl}/widget/companies/${config.companyId}/chat`, {
     method: "POST",
     headers: {
@@ -211,6 +211,7 @@ async function sendMessage(config, message, sessionId) {
       customerName: config.customerName || "",
       customerEmail: config.customerEmail || "",
       customerPhone: config.customerPhone || "",
+      isSuggestion,
     }),
   });
   const data = await response.json();
@@ -285,7 +286,7 @@ function initWidget(options = {}) {
   input.disabled = true;
   send.disabled = true;
 
-  async function submitMessage(text, displayText = text) {
+  async function submitMessage(text, displayText = text, { isSuggestion = false } = {}) {
     if (!text || !historyReady) return;
     input.value = "";
     messages.appendChild(messageNode("user", displayText));
@@ -295,7 +296,7 @@ function initWidget(options = {}) {
     messages.appendChild(typing);
     messages.scrollTop = messages.scrollHeight;
     try {
-      const result = await sendMessage(config, text, sessionId);
+      const result = await sendMessage(config, text, sessionId, { isSuggestion });
       typing.remove();
       messages.appendChild(messageNode(
         "bot",
@@ -304,7 +305,11 @@ function initWidget(options = {}) {
         {
           showFeedback: config.showFeedback,
           onFeedback: (feedback) => sendFeedback(config, result.conversationId, feedback),
-          onSuggestion: (message, label) => submitMessage(message, label),
+          onSuggestion: (message, label) => submitMessage(
+            message,
+            label,
+            { isSuggestion: true }
+          ),
         },
         result.suggestions || []
       ));

@@ -299,6 +299,7 @@ router.post("/", async (req, res) => {
       customerPhone,
       customerExternalId,
       customerAuthProvider,
+      isSuggestion,
     } = req.body;
 
     if (!message || !message.trim()) {
@@ -336,7 +337,9 @@ router.post("/", async (req, res) => {
     conversation.messages.push({ role: "user", content: originalMessage });
 
     const preprocessStarted = nowMs();
-    const preprocessed = await preprocessUserMessage(originalMessage);
+    const preprocessed = await preprocessUserMessage(originalMessage, {
+      skipSmallTalk: isSuggestion === true,
+    });
     timingsMs.preprocessing = nowMs() - preprocessStarted;
 
     if (preprocessed.type === "small_talk") {

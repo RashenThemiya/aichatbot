@@ -10,6 +10,12 @@ from chromadb.config import Settings as ChromaSettings
 from openai import OpenAI
 
 from app.config import settings
+from app.services.model_ids import (
+    extract_model_ids,
+    item_model_ids,
+    matches_model_ids,
+    serialize_model_ids,
+)
 
 
 class ChromaStore:
@@ -62,6 +68,10 @@ class ChromaStore:
         collection = self._get_collection(company_id)
         contents = [chunk.content for chunk in chunks]
         embeddings = self._embed(contents)
+        name_model_ids = extract_model_ids(document_name)
+        document_model_ids = name_model_ids or extract_model_ids(
+            " ".join(contents)
+        )
 
         ids = [f"{document_id}_chunk_{i}" for i in range(len(chunks))]
         metadatas = [
@@ -74,6 +84,14 @@ class ChromaStore:
                 "document_version": document_version,
                 "effective_date": effective_date,
                 "is_active": is_active,
+                # A model-bearing filename defines document ownership. For a
+                # generic multi-model manual, use local IDs and inherit the full
+                # document set only when a chunk has no model heading.
+                "model_ids": serialize_model_ids(
+                    name_model_ids
+                    or extract_model_ids(chunk.content)
+                    or document_model_ids
+                ),
             }
             for i, chunk in enumerate(chunks)
         ]
@@ -104,16 +122,48 @@ class ChromaStore:
         company_id: str,
         question: str,
         top_k: int,
+        required_model_ids: set[str] | None = None,
     ) -> list[dict]:
         collection = self._get_collection(company_id)
         count = collection.count()
         if count == 0:
             return []
 
+        required = required_model_ids or set()
+        where = None
+        eligible_count = count
+        if required:
+            all_items = collection.get(include=["documents", "metadatas"])
+            eligible_document_ids = sorted({
+                meta.get("document_id", "")
+                for doc, meta in zip(
+                    all_items.get("documents", []),
+                    all_items.get("metadatas", []),
+                )
+                if meta.get("document_id")
+                and matches_model_ids(doc, meta, required)
+            })
+            if not eligible_document_ids:
+                return []
+            eligible_count = sum(
+                1
+                for doc, meta in zip(
+                    all_items.get("documents", []),
+                    all_items.get("metadatas", []),
+                )
+                if matches_model_ids(doc, meta, required)
+            )
+            where = (
+                {"document_id": eligible_document_ids[0]}
+                if len(eligible_document_ids) == 1
+                else {"document_id": {"$in": eligible_document_ids}}
+            )
+
         query_embedding = self._embed([question])[0]
         results = collection.query(
             query_embeddings=[query_embedding],
-            n_results=min(top_k, count),
+            n_results=min(top_k * 4 if required else top_k, eligible_count),
+            where=where,
             include=["documents", "metadatas", "distances"],
         )
 
@@ -126,6 +176,8 @@ class ChromaStore:
             results["metadatas"][0],
             results["distances"][0],
         ):
+            if not matches_model_ids(doc, meta, required):
+                continue
             score = 1.0 / (1.0 + distance)
             chunks.append(
                 {
@@ -135,12 +187,13 @@ class ChromaStore:
                     "document_version": meta.get("document_version", "1"),
                     "effective_date": meta.get("effective_date", ""),
                     "is_active": meta.get("is_active", True),
+                    "model_ids": sorted(item_model_ids(doc, meta)),
                     "content": doc,
                     "score": round(score, 4),
                 }
             )
 
-        return chunks
+        return chunks[:top_k]
 
     @staticmethod
     def _terms(text: str) -> set[str]:
@@ -163,6 +216,7 @@ class ChromaStore:
         company_id: str,
         question: str,
         top_k: int,
+        required_model_ids: set[str] | None = None,
     ) -> list[dict]:
         """Combine semantic retrieval with exact-term matching."""
         collection = self._get_collection(company_id)
@@ -170,10 +224,23 @@ class ChromaStore:
         if count == 0:
             return []
 
-        semantic = self.query(company_id, question, min(top_k, count))
+        required = required_model_ids or set()
+        semantic = self.query(
+            company_id,
+            question,
+            min(top_k, count),
+            required_model_ids=required,
+        )
         all_items = collection.get(include=["documents", "metadatas"])
-        documents = all_items["documents"]
-        metadatas = all_items["metadatas"]
+        eligible = [
+            (doc, meta)
+            for doc, meta in zip(all_items["documents"], all_items["metadatas"])
+            if matches_model_ids(doc, meta, required)
+        ]
+        if not eligible:
+            return []
+        documents = [doc for doc, _meta in eligible]
+        metadatas = [meta for _doc, meta in eligible]
 
         tokenized = [self._tokens(doc) for doc in documents]
         query_tokens = self._tokens(question)
@@ -231,6 +298,7 @@ class ChromaStore:
                     "document_version": meta.get("document_version", "1"),
                     "effective_date": meta.get("effective_date", ""),
                     "is_active": meta.get("is_active", True),
+                    "model_ids": sorted(item_model_ids(doc, meta)),
                     "content": doc,
                     "score": min(0.7, raw_score / (raw_score + 1.0)),
                     "rank_score": 0.0,
@@ -261,6 +329,7 @@ class ChromaStore:
         company_id: str,
         chunks: list[dict],
         radius: int,
+        required_model_ids: set[str] | None = None,
     ) -> list[dict]:
         """Attach adjacent chunks from the same document as parent context."""
         if radius <= 0:
@@ -299,6 +368,12 @@ class ChromaStore:
             ):
                 if index in document_chunks:
                     doc, meta = document_chunks[index]
+                    if not matches_model_ids(
+                        doc,
+                        meta,
+                        required_model_ids or set(),
+                    ):
+                        continue
                     neighbors.append(
                         f"[Page {meta.get('page_number', '?')}]\n{doc}"
                     )

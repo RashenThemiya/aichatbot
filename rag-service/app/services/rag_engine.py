@@ -13,6 +13,7 @@ from app.models.schemas import (
     SourceChunk,
 )
 from app.services.chroma_store import ChromaStore
+from app.services.model_ids import extract_model_ids
 from app.services.pdf_processor import chunk_pages, extract_pages_from_pdf
 
 SYSTEM_PROMPT = """You are a customer support and product recommendation assistant. Answer using the provided context from company documents.
@@ -164,7 +165,10 @@ class RAGEngine:
                         "assumption as a customer requirement. missing_requirements must be an array of "
                         "short requirement names that would materially distinguish the available choices. "
                         "For a clear factual question or comparison of named products, sufficient is "
-                        "true. A request like 'which one should I select' is a recommendation and is not "
+                        "true even when the catalog may not contain the answer; retrieval handles that "
+                        "separately. Never ask for preferences or extra details before attempting to "
+                        "answer a clear question. A request like 'which one should I select' is a "
+                        "recommendation and is not "
                         "sufficient unless the user has explicitly stated an outcome/use case or other "
                         "decision criteria. For recommendations and troubleshooting, set sufficient false "
                         "when a missing detail could materially change the answer or make guidance unsafe. "
@@ -177,7 +181,10 @@ class RAGEngine:
                         "sufficient is false, clarification_question must ask only the smallest useful "
                         "question, in the customer's language, and may contain at most 3 short questions. "
                         "Otherwise clarification_question must be an empty string. "
-                        "clarification_options must be an array of up to 3 short objects containing "
+                        "clarification_options must be empty unless the request itself is genuinely "
+                        "unclear because it uses an unresolved reference such as 'that one' or contains "
+                        "too little meaning to identify the subject. For those genuinely unclear requests "
+                        "only, clarification_options may contain up to 3 short objects with "
                         "label and message. Each message must be a first-person customer answer to the "
                         "clarification question, never another question or an instruction. For example, "
                         "use label 'Personal use' with message 'I need it for personal use.' "
@@ -241,7 +248,15 @@ class RAGEngine:
                     options.append({"label": label[:120], "message": message[:500]})
                 if len(options) == 3:
                     break
-            options = self._sanitize_clarification_options(clarification, options)
+            allow_choice_buttons = (
+                intent == "unclear"
+                and self._is_fully_unclear_question(question)
+            )
+            options = (
+                self._sanitize_clarification_options(clarification, options)
+                if allow_choice_buttons
+                else []
+            )
             scenario_summary = str(parsed.get("scenario_summary") or "").strip()
             if intent == "recommendation":
                 scenario_summary = "; ".join(
@@ -256,6 +271,7 @@ class RAGEngine:
                 "sufficient": sufficient or not clarification,
                 "clarification_question": clarification,
                 "clarification_options": options,
+                "allow_choice_buttons": allow_choice_buttons,
                 "no_more_information": bool(parsed.get("no_more_information", False)),
             }
         except Exception:
@@ -268,6 +284,7 @@ class RAGEngine:
                 "sufficient": True,
                 "clarification_question": "",
                 "clarification_options": [],
+                "allow_choice_buttons": False,
                 "no_more_information": False,
             }
 
@@ -278,6 +295,53 @@ class RAGEngine:
         return bool(re.search(
             r"\b(?:recommend|recommendation|suggest|best|choose|select|suitable|"
             r"right for me|fit for me|match for me|which one)\b",
+            normalized,
+        ))
+
+    @staticmethod
+    def _is_fully_unclear_question(question: str) -> bool:
+        """Allow choice buttons only for short, explicitly unresolved requests."""
+        normalized = " ".join(question.casefold().split()).strip(" .?!")
+        if not normalized:
+            return True
+
+        unresolved_reference = re.search(
+            r"\b(?:this|that|these|those)\s+(?:one|ones|product|model|option|item)s?\b|"
+            r"\b(?:it|this|that)\s+one\b|"
+            r"\bthe\s+(?:first|second|third|other|last)\s+one\b",
+            normalized,
+        )
+        vague_request = re.fullmatch(
+            r"(?:please\s+)?(?:help|help me|tell me more|more details|more information|"
+            r"can you explain|explain this|what about this|what about that|what about it|"
+            r"show me the options)",
+            normalized,
+        )
+        return bool(unresolved_reference or vague_request)
+
+    @staticmethod
+    def _is_clear_factual_question(question: str) -> bool:
+        """Keep ordinary fact lookups out of the AI clarification path."""
+        normalized = " ".join(question.casefold().split()).strip()
+        if not normalized or RAGEngine._is_recommendation_request(normalized):
+            return False
+
+        if re.search(r"\b(?:compare|comparison|difference|different)\b|\bvs\.?\b|\bversus\b", normalized):
+            return True
+
+        return bool(re.match(
+            r"^(?:"
+            r"what\s+(?:is|are|was|were|does|do|did|can|could|will|would|"
+            r"size|voltage|current|power|capacity|rating|dimensions?|weight|"
+            r"warranty|temperature|frequency|protection|ports?|connectors?|"
+            r"fuse|error|code)\b|"
+            r"(?:does|do|did|can|could|is|are|was|were|will|would|has|have)\b|"
+            r"where\s+(?:is|are|does|do|can|could)\b|"
+            r"when\s+(?:is|are|does|do|did|can|could|will)\b|"
+            r"how\s+(?:much|many|long|wide|high|fast|deep|heavy)\b|"
+            r"which\s+(?:port|ports|connector|connectors|input|output|fuse|"
+            r"cable|setting|code|terminal|terminals)\b"
+            r")",
             normalized,
         ))
 
@@ -522,22 +586,44 @@ class RAGEngine:
         started = perf_counter()
         base_standalone_question = self._standalone_question(question, history or [])
         mark("standalone_question", started)
+        explicit_model_ids = extract_model_ids(question)
+        required_model_ids = explicit_model_ids or extract_model_ids(
+            base_standalone_question
+        )
+        retrieval_stats["model_filter_applied"] = bool(required_model_ids)
+        retrieval_stats["required_model_ids"] = ", ".join(
+            sorted(required_model_ids)
+        )
 
         started = perf_counter()
         preliminary_candidates = self.store.hybrid_query(
             company_id,
             base_standalone_question,
             min(max(k, 8), 12),
+            required_model_ids=required_model_ids,
         )
         mark("catalog_retrieval", started)
 
         started = perf_counter()
         catalog_context = self._catalog_context(preliminary_candidates)
-        request_analysis = self._analyze_request(
-            question,
-            history or [],
-            catalog_context,
-        )
+        if self._is_clear_factual_question(question):
+            request_analysis = {
+                "intent": "factual",
+                "scenario_summary": "",
+                "known_requirements": [],
+                "missing_requirements": [],
+                "sufficient": True,
+                "clarification_question": "",
+                "clarification_options": [],
+                "allow_choice_buttons": False,
+                "no_more_information": False,
+            }
+        else:
+            request_analysis = self._analyze_request(
+                question,
+                history or [],
+                catalog_context,
+            )
         mark("request_analysis", started)
         retrieval_stats["intent"] = request_analysis["intent"]
         retrieval_stats["known_requirement_count"] = len(
@@ -603,13 +689,6 @@ class RAGEngine:
                 ClarificationSuggestion(label=option["label"], message=option["message"])
                 for option in request_analysis["clarification_options"]
             ]
-            if suggestions:
-                suggestions.append(
-                    ClarificationSuggestion(
-                        label="None of these",
-                        message="None of these choices match, and I do not have more information.",
-                    )
-                )
             timings["total"] = int((perf_counter() - query_started) * 1000)
             return QueryResponse(
                 answer=request_analysis["clarification_question"],
@@ -652,7 +731,12 @@ class RAGEngine:
             seen[key] = chunk
         started = perf_counter()
         for q in queries:
-            for chunk in self.store.hybrid_query(company_id, q, per_query_k):
+            for chunk in self.store.hybrid_query(
+                company_id,
+                q,
+                per_query_k,
+                required_model_ids=required_model_ids,
+            ):
                 key = (chunk["document_id"], chunk.get("page_number"), chunk["content"][:80])
                 if key not in seen or chunk["rank_score"] > seen[key]["rank_score"]:
                     seen[key] = chunk
@@ -662,6 +746,11 @@ class RAGEngine:
         candidates = sorted(
             seen.values(), key=lambda c: c["rank_score"], reverse=True
         )[:candidate_k]
+        if required_model_ids:
+            candidates = [
+                chunk for chunk in candidates
+                if set(chunk.get("model_ids", [])) & required_model_ids
+            ]
         started = perf_counter()
         retrieved = self._rerank(standalone_question, candidates, k)
         mark("rerank", started)
@@ -675,6 +764,7 @@ class RAGEngine:
             company_id,
             retrieved,
             settings.neighbor_chunks,
+            required_model_ids=required_model_ids,
         )
         mark("neighbor_expansion", started)
         
@@ -694,11 +784,13 @@ class RAGEngine:
                 ),
             )
         if not retrieved:
-            suggestions = self._clarification_suggestions(question, candidates)
             return QueryResponse(
-                answer=self._clarification_answer(suggestions),
+                answer=(
+                    "I couldn't find enough reliable information to answer that confidently. "
+                    "Try rephrasing the question or checking the product name and model."
+                ),
                 sources=[],
-                suggestions=suggestions,
+                suggestions=[],
             )
 
         context_blocks = []
@@ -757,11 +849,13 @@ class RAGEngine:
                     "with me and I'll help you narrow it down."
                 )
             else:
-                suggestions = self._clarification_suggestions(question, candidates)
                 return QueryResponse(
-                    answer=self._clarification_answer(suggestions),
+                    answer=(
+                        "I couldn't find enough reliable information to answer that confidently. "
+                        "Try rephrasing the question or checking the product name and model."
+                    ),
                     sources=[],
-                    suggestions=suggestions,
+                    suggestions=[],
                 )
         cited_indices = {
             int(index)
@@ -820,57 +914,6 @@ class RAGEngine:
         cleaned = re.sub(r"[ \t]+\n", "\n", cleaned)
         cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
         return cleaned.strip()
-
-    def _clarification_suggestions(
-        self, question: str, candidates: list[dict]
-    ) -> list[ClarificationSuggestion]:
-        """Turn weak retrieval matches into safe, clickable follow-up searches."""
-        suggestions = []
-        seen = set()
-        key_terms = {
-            term.lower()
-            for term in re.findall(r"[A-Za-z0-9-]+", question)
-            if len(term) >= 5 or any(char.isdigit() for char in term)
-        }
-        for chunk in candidates:
-            content = " ".join(chunk.get("content", "").split())
-            if not content:
-                continue
-            document_name = chunk.get("document_name") or "Related document"
-            candidate_text = f"{document_name} {content}".lower()
-            if key_terms and not any(term in candidate_text for term in key_terms):
-                continue
-            page = chunk.get("page_number")
-            excerpt = content[:180].rsplit(" ", 1)[0].strip() or content[:180]
-            page_suffix = f" (page {page})" if page else ""
-            label = f"{document_name}{page_suffix}: {excerpt}"
-            if label.casefold() in seen:
-                continue
-            seen.add(label.casefold())
-            suggestions.append(
-                ClarificationSuggestion(
-                    label=label,
-                    message=(
-                        "I meant this related topic: "
-                        f"{excerpt}. Please use it to answer my original question."
-                    ),
-                )
-            )
-            if len(suggestions) == 3:
-                break
-        return suggestions
-
-    @staticmethod
-    def _clarification_answer(suggestions: list[ClarificationSuggestion]) -> str:
-        if suggestions:
-            return (
-                "I want to make sure I've understood you correctly. "
-                "Which of these is closest to what you mean? You can also add a little more detail."
-            )
-        return (
-            "I want to make sure I give you the right answer. Could you share the "
-            "product model, a related document name, or one more detail?"
-        )
 
     def _standalone_question(self, question: str, history: list[str]) -> str:
         if not history:
