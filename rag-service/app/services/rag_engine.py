@@ -1,5 +1,6 @@
 import json
 import re
+from decimal import Decimal, InvalidOperation
 from difflib import SequenceMatcher
 
 from openai import OpenAI
@@ -323,14 +324,26 @@ class RAGEngine:
     def _is_clear_factual_question(question: str) -> bool:
         """Keep ordinary fact lookups out of the AI clarification path."""
         normalized = " ".join(question.casefold().split()).strip()
-        if not normalized or RAGEngine._is_recommendation_request(normalized):
+        if (
+            not normalized
+            or RAGEngine._is_recommendation_request(normalized)
+            or RAGEngine._is_fully_unclear_question(normalized)
+        ):
             return False
 
         if re.search(r"\b(?:compare|comparison|difference|different)\b|\bvs\.?\b|\bversus\b", normalized):
             return True
 
+        if extract_model_ids(question) and re.search(
+            r"\b(?:what|which|where|when|does|do|can|could|is|are|will|"
+            r"would|how\s+(?:much|many|long|wide|high|fast|deep|heavy))\b",
+            normalized,
+        ):
+            return True
+
         return bool(re.match(
             r"^(?:"
+            r"what\b|"
             r"what\s+(?:is|are|was|were|does|do|did|can|could|will|would|"
             r"size|voltage|current|power|capacity|rating|dimensions?|weight|"
             r"warranty|temperature|frequency|protection|ports?|connectors?|"
@@ -344,6 +357,102 @@ class RAGEngine:
             r")",
             normalized,
         ))
+
+    @staticmethod
+    def _scope_history_to_current_topic(
+        question: str,
+        history: list[str],
+    ) -> list[str]:
+        """Keep only the latest topic needed to resolve an incomplete follow-up."""
+        recent = history[-settings.conversation_history_messages:]
+        if not recent:
+            return []
+
+        # A complete question must stand on its own. This prevents a previous
+        # product (for example IC244090i) from contaminating a new named product
+        # such as SureSine, even when the new product is not a code-like model ID.
+        if not RAGEngine._question_requires_history(question):
+            return []
+
+        # An incomplete follow-up belongs to the most recent complete customer
+        # topic, not to the most recent code-like model anywhere in the session.
+        for index in range(len(recent) - 1, -1, -1):
+            entry = recent[index].strip()
+            if not entry.casefold().startswith("user:"):
+                continue
+            earlier_question = entry.split(":", 1)[1].strip()
+            if RAGEngine._is_topic_anchor(earlier_question):
+                return recent[index:]
+        return recent
+
+    @staticmethod
+    def _question_requires_history(question: str) -> bool:
+        """Return true only when the question omits the subject or uses a reference."""
+        text = " ".join(str(question or "").split()).strip()
+        normalized = text.casefold().strip(" .?!")
+        if not normalized or extract_model_ids(text):
+            return False
+
+        if re.search(
+            r"\b(?:it|its|itself|this|that|these|those|they|their|them)\b|"
+            r"\b(?:this|that|the)\s+(?:one|ones|product|model|unit|item)\b|"
+            r"\b(?:first|second|third|other|last)\s+one\b",
+            normalized,
+        ):
+            return True
+
+        # CamelCase and mixed-case names such as SureSine are explicit product
+        # subjects. Common electrical acronyms are deliberately excluded.
+        generic_acronyms = {
+            "AC", "DC", "PV", "USB", "LED", "BMS", "RMS", "MPPT",
+            "VAC", "VDC", "Hz", "AWG",
+        }
+        product_tokens = re.findall(r"\b[A-Za-z][A-Za-z0-9-]{2,}\b", text)
+        if any(
+            token not in generic_acronyms
+            and any(char.isupper() for char in token[1:])
+            for token in product_tokens
+        ):
+            return False
+
+        # These forms ask for an attribute but contain no product subject.
+        return bool(re.match(
+            r"^(?:what|which)\s+(?:(?:is|are|was|were)\s+)?(?:the\s+)?"
+            r"(?:continuous|peak|rated|maximum|minimum|available|supported|"
+            r"ac|dc|input|output|power|voltage|current|rating|versions?|"
+            r"dimensions?|weight|frequency|warranty|ports?|fuse|error)\b|"
+            r"^how\s+(?:much|many|long|wide|high|fast|heavy)\b|"
+            r"^(?:does|do|can|could|is|are|will|would|has|have)\s+(?:the\s+)?"
+            r"(?:product|model|unit|inverter|charger|controller)\b",
+            normalized,
+        ))
+
+    @staticmethod
+    def _is_topic_anchor(question: str) -> bool:
+        raw = " ".join(str(question or "").split()).strip()
+        normalized = raw.casefold().strip(" .?!")
+        if not normalized or RAGEngine._question_requires_history(question):
+            return False
+        if normalized in {
+            "hi", "hello", "hey", "thanks", "thank you", "ok", "okay",
+            "im asking another one bro", "i'm asking another one bro",
+        }:
+            return False
+        if extract_model_ids(raw) or "?" in raw:
+            return True
+        if re.match(
+            r"^(?:what|which|where|when|why|how|who|does|do|can|could|is|"
+            r"are|will|would|has|have|tell|explain|compare|recommend|find|help|"
+            r"show|i\s+(?:need|want|am looking))\b",
+            normalized,
+        ):
+            return True
+        # Accept standalone CamelCase product names, but not short answers such
+        # as "Solar installation" given during a recommendation interview.
+        return any(
+            any(char.isupper() for char in token[1:])
+            for token in re.findall(r"\b[A-Za-z][A-Za-z0-9-]{2,}\b", raw)
+        )
 
     @staticmethod
     def _validated_known_requirements(items: list, customer_evidence: str) -> list[dict]:
@@ -552,6 +661,10 @@ class RAGEngine:
         retrieval_stats["top_k"] = k
         retrieval_stats["reranking_enabled"] = bool(settings.enable_reranking or self.cross_encoder)
         retrieval_stats["answer_verification_enabled"] = bool(settings.enable_answer_verification)
+        retrieval_stats["numeric_verification_enabled"] = bool(settings.enable_numeric_verification)
+        scoped_history = self._scope_history_to_current_topic(question, history or [])
+        retrieval_stats["history_messages_received"] = len(history or [])
+        retrieval_stats["history_messages_used"] = len(scoped_history)
 
         started = perf_counter()
         if not self.store.company_has_documents(company_id):
@@ -584,7 +697,7 @@ class RAGEngine:
             )
 
         started = perf_counter()
-        base_standalone_question = self._standalone_question(question, history or [])
+        base_standalone_question = self._standalone_question(question, scoped_history)
         mark("standalone_question", started)
         explicit_model_ids = extract_model_ids(question)
         required_model_ids = explicit_model_ids or extract_model_ids(
@@ -621,7 +734,7 @@ class RAGEngine:
         else:
             request_analysis = self._analyze_request(
                 question,
-                history or [],
+                scoped_history,
                 catalog_context,
             )
         mark("request_analysis", started)
@@ -632,9 +745,9 @@ class RAGEngine:
         retrieval_stats["missing_requirements"] = ", ".join(
             request_analysis["missing_requirements"]
         )[:500]
-        clarification_rounds = self._clarification_round_count(history or [])
+        clarification_rounds = self._clarification_round_count(scoped_history)
         repeated_clarification = self._is_repeated_clarification(
-            request_analysis["clarification_question"], history or []
+            request_analysis["clarification_question"], scoped_history
         )
         if (
             repeated_clarification
@@ -642,12 +755,12 @@ class RAGEngine:
         ):
             retry_analysis = self._analyze_request(
                 question,
-                history or [],
+                scoped_history,
                 catalog_context,
                 avoid_question=request_analysis["clarification_question"],
             )
             retry_repeated = self._is_repeated_clarification(
-                retry_analysis["clarification_question"], history or []
+                retry_analysis["clarification_question"], scoped_history
             )
             if retry_repeated:
                 retry_analysis["sufficient"] = False
@@ -799,13 +912,17 @@ class RAGEngine:
                 f", page {chunk['page_number']}"
                 if chunk.get("page_number") else ""
             )
+            section = (
+                f", section {chunk['section_heading']}"
+                if chunk.get("section_heading") else ""
+            )
             context_blocks.append(
-                f"[Source {i} - {chunk['document_name']}{page}]\n"
+                f"[Source {i} - {chunk['document_name']}{page}{section}]\n"
                 f"{chunk.get('context_content', chunk['content'])}"
             )
         context = "\n\n---\n\n".join(context_blocks)
 
-        recent_history = (history or [])[-settings.conversation_history_messages:]
+        recent_history = scoped_history[-settings.conversation_history_messages:]
         conversation = "\n".join(recent_history) or "(no earlier messages)"
         started = perf_counter()
         response = self.openai.chat.completions.create(
@@ -841,6 +958,46 @@ class RAGEngine:
             allow_clarification=not clarification_exhausted,
         )
         answer = self._remove_verifier_commentary(answer)
+        unsupported_numeric_claims = (
+            self._unsupported_numeric_claims(answer, retrieved)
+            if settings.enable_numeric_verification
+            else []
+        )
+        retrieval_stats["numeric_repair_attempted"] = False
+        retrieval_stats["initial_unsupported_numeric_claim_count"] = len(
+            unsupported_numeric_claims
+        )
+        if unsupported_numeric_claims:
+            retrieval_stats["numeric_repair_attempted"] = True
+            answer = self._repair_numeric_answer(
+                standalone_question,
+                context,
+                answer,
+                unsupported_numeric_claims,
+            )
+            answer = self._remove_verifier_commentary(answer)
+            unsupported_numeric_claims = self._unsupported_numeric_claims(
+                answer,
+                retrieved,
+            )
+        retrieval_stats["unsupported_numeric_claim_count"] = len(
+            unsupported_numeric_claims
+        )
+        if unsupported_numeric_claims:
+            timings["total"] = int((perf_counter() - query_started) * 1000)
+            return QueryResponse(
+                answer=(
+                    "I found related information, but I couldn't confirm the exact value "
+                    "for that product confidently. Please check the product model or rephrase "
+                    "the specification you need."
+                ),
+                sources=[],
+                suggestions=[],
+                diagnostics=QueryDiagnostics(
+                    timings_ms=timings,
+                    retrieval=retrieval_stats,
+                ),
+            )
         if self._is_unsupported_answer(answer):
             if clarification_exhausted:
                 answer = (
@@ -873,6 +1030,7 @@ class RAGEngine:
                 content=c["content"][:300] + ("..." if len(c["content"]) > 300 else ""),
                 score=c["score"],
                 page_number=c.get("page_number"),
+                section_heading=c.get("section_heading", ""),
             )
             for c in cited_retrieved
         ]
@@ -900,6 +1058,147 @@ class RAGEngine:
         )
 
     @staticmethod
+    def _numeric_claims(text: str) -> set[tuple[str, str, str]]:
+        """Extract exact technical values while ignoring citation/model numbers."""
+        cleaned = re.sub(r"\[Source\s+\d+\]", "", text, flags=re.I)
+        number_words = {
+            "one": "1", "two": "2", "three": "3", "four": "4", "five": "5",
+            "six": "6", "seven": "7", "eight": "8", "nine": "9", "ten": "10",
+        }
+        cleaned = re.sub(
+            r"\b(one|two|three|four|five|six|seven|eight|nine|ten)"
+            r"(?=\s*-?\s*(?:years?|days?|hours?|hrs?)\b)",
+            lambda match: number_words[match.group(1).casefold()],
+            cleaned,
+            flags=re.I,
+        )
+        unit_aliases = {
+            "amp": "a", "amps": "a", "ampere": "a", "amperes": "a",
+            "volt": "v", "volts": "v", "watt": "w", "watts": "w",
+            "kilowatt": "kw", "kilowatts": "kw",
+            "percent": "%", "percentage": "%", "hours": "hour",
+            "hrs": "hour", "hr": "hour", "years": "year", "days": "day",
+        }
+        claims: set[tuple[str, str, str]] = set()
+        pattern = re.compile(
+            r"(?<![A-Za-z0-9])(?P<comparator>>=|<=|>|<|≥|≤|at\s+least|"
+            r"more\s+than|above|under|less\s+than)?\s*"
+            r"(?P<number>-?\d+(?:,\d{3})*(?:\.\d+)?)\s*-?\s*"
+            r"(?P<unit>°?\s*(?:C|F)|VAC|VDC|V|volts?|kW|kilowatts?|MW|W|watts?|mA|A|amps?|amperes?|"
+            r"mAh|Ah|kHz|Hz|mm|cm|kg|%|percent(?:age)?|hours?|hrs?|years?|days?)\b",
+            flags=re.I,
+        )
+
+        def add_claim(number: str, unit: str, comparator: str = "") -> None:
+            try:
+                normalized_number = format(Decimal(number.replace(",", "")), "f")
+                if "." in normalized_number:
+                    normalized_number = normalized_number.rstrip("0").rstrip(".")
+            except InvalidOperation:
+                return
+            normalized_unit = re.sub(r"[°\s]", "", unit).casefold()
+            normalized_unit = unit_aliases.get(normalized_unit, normalized_unit)
+            normalized_comparator = {
+                "≥": ">=", "≤": "<=", "at least": ">=",
+                "more than": ">", "above": ">", "under": "<",
+                "less than": "<",
+            }.get(comparator.casefold(), comparator)
+            claims.add((normalized_comparator, normalized_number, normalized_unit))
+
+        for match in pattern.finditer(cleaned):
+            add_claim(
+                match.group("number"),
+                match.group("unit"),
+                match.group("comparator") or "",
+            )
+
+        dimensions = re.compile(
+            r"(?<![A-Za-z0-9])(-?\d+(?:\.\d+)?)\s*[x×]\s*"
+            r"(-?\d+(?:\.\d+)?)(?:\s*[x×]\s*(-?\d+(?:\.\d+)?))?\s*"
+            r"(mm|cm)\b",
+            flags=re.I,
+        )
+        for match in dimensions.finditer(cleaned):
+            for number in match.groups()[:3]:
+                if number is not None:
+                    add_claim(number, match.group(4))
+
+        ranges = re.compile(
+            r"(?<![A-Za-z0-9])(-?\d+(?:\.\d+)?)\s*(?:/|to|[-–])\s*"
+            r"(-?\d+(?:\.\d+)?)\s*"
+            r"(VAC|VDC|V|volts?|kW|kilowatts?|W|watts?|mA|A|amps?|amperes?|"
+            r"mAh|Ah|kHz|Hz|mm|cm|kg|%|percent(?:age)?|hours?|hrs?|years?|days?)\b",
+            flags=re.I,
+        )
+        for match in ranges.finditer(cleaned):
+            add_claim(match.group(1), match.group(3))
+            add_claim(match.group(2), match.group(3))
+        return claims
+
+    @classmethod
+    def _unsupported_numeric_claims(
+        cls,
+        answer: str,
+        retrieved: list[dict],
+    ) -> list[tuple[str, str, str]]:
+        claims = cls._numeric_claims(answer)
+        if not claims:
+            return []
+        cited = {
+            int(value)
+            for value in re.findall(r"\[Source\s+(\d+)\]", answer, flags=re.I)
+            if 1 <= int(value) <= len(retrieved)
+        }
+        if not cited:
+            return sorted(claims)
+        supporting_text = "\n".join(
+            retrieved[index - 1].get(
+                "context_content",
+                retrieved[index - 1].get("content", ""),
+            )
+            for index in sorted(cited)
+        )
+        source_claims = cls._numeric_claims(supporting_text)
+        return sorted(claims - source_claims)
+
+    def _repair_numeric_answer(
+        self,
+        question: str,
+        context: str,
+        answer: str,
+        unsupported_claims: list[tuple[str, str, str]],
+    ) -> str:
+        """Give the model one bounded chance to correct values/citations from evidence."""
+        rendered_claims = ", ".join(
+            f"{comparator}{number} {unit}".strip()
+            for comparator, number, unit in unsupported_claims
+        )
+        try:
+            response = self.openai.chat.completions.create(
+                model=settings.openai_chat_model,
+                messages=[{
+                    "role": "user",
+                    "content": (
+                        "Repair this customer-support answer using only the supplied source "
+                        "context. Some numeric claims are missing exact support or a usable "
+                        f"citation: {rendered_claims}. Correct them to the exact source values "
+                        "or remove them. Put a [Source N] citation in every paragraph or bullet "
+                        "that contains a factual specification. Keep supported useful details, "
+                        "answer the question directly, and return only the repaired answer. "
+                        "Never mention this repair process.\n\n"
+                        f"Question:\n{question}\n\n"
+                        f"Source context:\n{context}\n\n"
+                        f"Answer to repair:\n{answer}"
+                    ),
+                }],
+                temperature=0,
+            )
+            repaired = (response.choices[0].message.content or "").strip()
+            return repaired or answer
+        except Exception:
+            return answer
+
+    @staticmethod
     def _remove_verifier_commentary(answer: str) -> str:
         """Remove accidental internal editing notes from a customer-facing answer."""
         cleaned = re.sub(
@@ -911,6 +1210,12 @@ class RAGEngine:
             answer,
         )
         cleaned = re.sub(r"(?im)^.*(?:draft answer|verified answer).*$", "", cleaned)
+        cleaned = (
+            cleaned.replace("�C", "°C")
+            .replace("�F", "°F")
+            .replace("˚C", "°C")
+            .replace("˚F", "°F")
+        )
         cleaned = re.sub(r"[ \t]+\n", "\n", cleaned)
         cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
         return cleaned.strip()

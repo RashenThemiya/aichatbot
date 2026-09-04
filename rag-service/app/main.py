@@ -10,6 +10,7 @@ from app.models.schemas import (
     IngestResponse,
     QueryRequest,
     QueryResponse,
+    UpdateDocumentActiveRequest,
 )
 from app.services.rag_engine import RAGEngine
 
@@ -73,6 +74,22 @@ def delete_document(request: DeleteDocumentRequest):
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Delete failed: {str(e)}")
+
+
+@app.patch("/documents/active", response_model=DeleteResponse)
+def update_document_active(request: UpdateDocumentActiveRequest):
+    try:
+        engine.store.set_document_active(
+            request.company_id,
+            request.document_id,
+            request.is_active,
+        )
+        return DeleteResponse(
+            success=True,
+            message=f"Updated active state for document {request.document_id}",
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Active-state update failed: {str(e)}")
 
 
 @app.post("/query", response_model=QueryResponse)

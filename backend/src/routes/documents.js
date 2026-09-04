@@ -8,6 +8,7 @@ const config = require("../config");
 const Company = require("../models/Company");
 const Document = require("../models/Document");
 const ragClient = require("../services/ragClient");
+const { documentKey, hashFile } = require("../services/documentIdentity");
 const { canAccessCompany } = require("../middleware/auth");
 
 const router = express.Router({ mergeParams: true });
@@ -52,6 +53,10 @@ function normalizeRelativeName(value) {
   return normalized || "";
 }
 
+function removeUploadedFile(filePath) {
+  if (filePath && fs.existsSync(filePath)) fs.unlinkSync(filePath);
+}
+
 async function ensureCompany(companyId) {
   return Company.findById(companyId);
 }
@@ -62,6 +67,31 @@ async function createAndIndexDocument(
   originalName = file.originalname,
   metadata = {}
 ) {
+  const contentHash = await hashFile(file.path);
+  const existingDuplicate = await Document.findOne({
+    companyId: company._id,
+    contentHash,
+  });
+  if (existingDuplicate) {
+    removeUploadedFile(file.path);
+    return {
+      ok: false,
+      duplicate: true,
+      error: "This PDF has already been uploaded",
+      document: existingDuplicate,
+      detail: `Duplicate of ${existingDuplicate.originalName}`,
+    };
+  }
+
+  const normalizedKey = documentKey(originalName);
+  const previousVersion = normalizedKey
+    ? await Document.findOne({ companyId: company._id, documentKey: normalizedKey })
+      .sort({ createdAt: -1 })
+    : null;
+  const previousVersionNumber = Number(previousVersion?.documentVersion);
+  const inferredVersion = Number.isFinite(previousVersionNumber)
+    ? String(previousVersionNumber + 1)
+    : "1";
   const doc = await Document.create({
     companyId: company._id,
     originalName,
@@ -69,8 +99,10 @@ async function createAndIndexDocument(
     filePath: path.resolve(file.path),
     mimeType: file.mimetype,
     fileSize: file.size,
+    contentHash,
+    documentKey: normalizedKey,
     status: "indexing",
-    documentVersion: metadata.documentVersion || "1",
+    documentVersion: metadata.documentVersion || inferredVersion,
     effectiveDate: metadata.effectiveDate || null,
     isActive: metadata.isActive !== false && metadata.isActive !== "false",
   });
@@ -89,6 +121,28 @@ async function createAndIndexDocument(
     doc.status = "indexed";
     doc.chunksIndexed = result.chunks_indexed;
     await doc.save();
+
+    if (doc.isActive && normalizedKey) {
+      const superseded = await Document.find({
+        companyId: company._id,
+        documentKey: normalizedKey,
+        _id: { $ne: doc._id },
+        isActive: true,
+      });
+      for (const oldDocument of superseded) {
+        try {
+          await ragClient.setDocumentActive({
+            companyId: company._id.toString(),
+            documentId: oldDocument._id.toString(),
+            isActive: false,
+          });
+          oldDocument.isActive = false;
+          await oldDocument.save();
+        } catch (activeErr) {
+          console.warn(`Unable to deactivate old vectors for ${oldDocument._id}:`, activeErr.message);
+        }
+      }
+    }
 
     return { ok: true, document: doc };
   } catch (indexErr) {
@@ -148,10 +202,11 @@ router.post(
     if (files.length === 1) {
       const [result] = results;
       if (result.ok) return res.status(201).json(result.document);
-      res.status(502).json({
+      res.status(result.duplicate ? 409 : 502).json({
         error: result.error,
         document: result.document,
         detail: result.detail,
+        duplicate: Boolean(result.duplicate),
       });
       return;
     }
@@ -319,6 +374,54 @@ router.delete("/:documentId", async (req, res) => {
   }
 });
 
+router.patch("/:documentId/active", async (req, res) => {
+  try {
+    if (typeof req.body.isActive !== "boolean") {
+      return res.status(400).json({ error: "isActive must be a boolean" });
+    }
+    const doc = await Document.findOne({
+      _id: req.params.documentId,
+      companyId: req.params.companyId,
+    });
+    if (!doc) return res.status(404).json({ error: "Document not found" });
+    if (req.body.isActive && doc.duplicateOf) {
+      return res.status(409).json({ error: "An exact duplicate cannot be activated" });
+    }
+    doc.documentKey = doc.documentKey || documentKey(doc.originalName);
+
+    if (req.body.isActive && doc.documentKey) {
+      const related = await Document.find({
+        companyId: req.params.companyId,
+        documentKey: doc.documentKey,
+        _id: { $ne: doc._id },
+        isActive: true,
+      });
+      for (const other of related) {
+        await ragClient.setDocumentActive({
+          companyId: req.params.companyId,
+          documentId: other._id.toString(),
+          isActive: false,
+        });
+        other.isActive = false;
+        await other.save();
+      }
+    }
+
+    await ragClient.setDocumentActive({
+      companyId: req.params.companyId,
+      documentId: doc._id.toString(),
+      isActive: req.body.isActive,
+    });
+    doc.isActive = req.body.isActive;
+    await doc.save();
+    return res.json(doc);
+  } catch (err) {
+    return res.status(err.response?.status || 500).json({
+      error: err.response?.data?.detail || err.message,
+    });
+  }
+});
+
 router.post("/:documentId/reindex", async (req, res) => {
   try {
     const doc = await Document.findOne({
@@ -330,6 +433,30 @@ router.post("/:documentId/reindex", async (req, res) => {
     }
     if (!fs.existsSync(doc.filePath)) {
       return res.status(404).json({ error: "PDF file missing on disk" });
+    }
+
+    const contentHash = await hashFile(doc.filePath);
+    const duplicate = await Document.findOne({
+      _id: { $ne: doc._id },
+      companyId: req.params.companyId,
+      contentHash,
+    });
+    doc.contentHash = contentHash;
+    doc.documentKey = doc.documentKey || documentKey(doc.originalName);
+    if (duplicate) {
+      doc.isActive = false;
+      doc.duplicateOf = duplicate._id;
+      await doc.save();
+      await ragClient.setDocumentActive({
+        companyId: req.params.companyId,
+        documentId: doc._id.toString(),
+        isActive: false,
+      });
+      return res.status(409).json({
+        error: `Exact duplicate of ${duplicate.originalName}`,
+        duplicate: true,
+        document: doc,
+      });
     }
 
     doc.status = "indexing";

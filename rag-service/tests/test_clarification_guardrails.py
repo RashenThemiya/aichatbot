@@ -21,6 +21,11 @@ class ClarificationGuardrailTests(unittest.TestCase):
             "Does model IC1230150 use a 450A fuse?",
             "Can the controller operate in harsh environments?",
             "How much charging current does IC122055I provide?",
+            "What AC output versions are available?",
+            (
+                "I am preparing to install my IC244090i inverter on a custom mounting "
+                "board. Where are the mounting holes located on this specific unit?"
+            ),
             "Where is the communication port?",
             "Which port connects the BTS cable?",
             "What is the difference between IC121040 and IC121040I?",

@@ -66,12 +66,22 @@ class ChromaStore:
             return 0
 
         collection = self._get_collection(company_id)
-        contents = [chunk.content for chunk in chunks]
-        embeddings = self._embed(contents)
+        raw_contents = [chunk.content for chunk in chunks]
         name_model_ids = extract_model_ids(document_name)
         document_model_ids = name_model_ids or extract_model_ids(
-            " ".join(contents)
+            " ".join(raw_contents)
         )
+        contents = []
+        for chunk in chunks:
+            local_model_ids = name_model_ids or extract_model_ids(chunk.content) or document_model_ids
+            labels = [f"Document: {document_name}"]
+            if local_model_ids:
+                labels.append(f"Product model: {', '.join(sorted(local_model_ids))}")
+            section_heading = getattr(chunk, "section_heading", "")
+            if section_heading:
+                labels.append(f"Section: {section_heading}")
+            contents.append("\n".join(labels) + f"\n\n{chunk.content}")
+        embeddings = self._embed(contents)
 
         ids = [f"{document_id}_chunk_{i}" for i in range(len(chunks))]
         metadatas = [
@@ -81,6 +91,7 @@ class ChromaStore:
                 "document_name": document_name,
                 "chunk_index": i,
                 "page_number": chunk.page_number,
+                "section_heading": getattr(chunk, "section_heading", ""),
                 "document_version": document_version,
                 "effective_date": effective_date,
                 "is_active": is_active,
@@ -117,6 +128,25 @@ class ChromaStore:
         if existing["ids"]:
             collection.delete(ids=existing["ids"])
 
+    def set_document_active(
+        self,
+        company_id: str,
+        document_id: str,
+        is_active: bool,
+    ) -> None:
+        collection = self._get_collection(company_id)
+        existing = collection.get(
+            where={"document_id": document_id},
+            include=["metadatas"],
+        )
+        if not existing["ids"]:
+            return
+        metadatas = [
+            {**metadata, "is_active": is_active}
+            for metadata in existing["metadatas"]
+        ]
+        collection.update(ids=existing["ids"], metadatas=metadatas)
+
     def query(
         self,
         company_id: str,
@@ -130,7 +160,7 @@ class ChromaStore:
             return []
 
         required = required_model_ids or set()
-        where = None
+        where = {"is_active": True}
         eligible_count = count
         if required:
             all_items = collection.get(include=["documents", "metadatas"])
@@ -141,6 +171,7 @@ class ChromaStore:
                     all_items.get("metadatas", []),
                 )
                 if meta.get("document_id")
+                and meta.get("is_active", True)
                 and matches_model_ids(doc, meta, required)
             })
             if not eligible_document_ids:
@@ -151,13 +182,15 @@ class ChromaStore:
                     all_items.get("documents", []),
                     all_items.get("metadatas", []),
                 )
-                if matches_model_ids(doc, meta, required)
+                if meta.get("is_active", True)
+                and matches_model_ids(doc, meta, required)
             )
-            where = (
+            document_filter = (
                 {"document_id": eligible_document_ids[0]}
                 if len(eligible_document_ids) == 1
                 else {"document_id": {"$in": eligible_document_ids}}
             )
+            where = {"$and": [{"is_active": True}, document_filter]}
 
         query_embedding = self._embed([question])[0]
         results = collection.query(
@@ -184,6 +217,7 @@ class ChromaStore:
                     "document_id": meta.get("document_id", ""),
                     "document_name": meta.get("document_name", ""),
                     "page_number": meta.get("page_number"),
+                    "section_heading": meta.get("section_heading", ""),
                     "document_version": meta.get("document_version", "1"),
                     "effective_date": meta.get("effective_date", ""),
                     "is_active": meta.get("is_active", True),
@@ -235,7 +269,8 @@ class ChromaStore:
         eligible = [
             (doc, meta)
             for doc, meta in zip(all_items["documents"], all_items["metadatas"])
-            if matches_model_ids(doc, meta, required)
+            if meta.get("is_active", True)
+            and matches_model_ids(doc, meta, required)
         ]
         if not eligible:
             return []
@@ -295,6 +330,7 @@ class ChromaStore:
                     "document_id": meta.get("document_id", ""),
                     "document_name": meta.get("document_name", ""),
                     "page_number": meta.get("page_number"),
+                    "section_heading": meta.get("section_heading", ""),
                     "document_version": meta.get("document_version", "1"),
                     "effective_date": meta.get("effective_date", ""),
                     "is_active": meta.get("is_active", True),

@@ -181,21 +181,30 @@ Add these values to `rag-service/.env`.
 | `CHUNK_SIZE` | `600` | Characters per chunk |
 | `CHUNK_OVERLAP` | `150` | Overlap between chunks |
 | `TOP_K` | `6` | Final chunks supplied to the answer model |
-| `RETRIEVAL_CANDIDATES` | `24` | Hybrid-search candidates considered before reranking |
+| `RETRIEVAL_CANDIDATES` | `40` | Hybrid-search candidates considered before reranking |
 | `MINIMUM_RELEVANCE_SCORE` | `0.25` | Rejects weak retrieval results |
 | `ENABLE_RERANKING` | `true` | Reranks retrieved chunks before answering |
 | `ENABLE_ANSWER_VERIFICATION` | `true` | Removes answer claims unsupported by retrieved PDF text |
-| `CONVERSATION_HISTORY_MESSAGES` | `6` | Recent messages used to resolve follow-up questions |
+| `ENABLE_NUMERIC_VERIFICATION` | `true` | Rejects technical values not present in their cited source |
+| `CONVERSATION_HISTORY_MESSAGES` | `16` | Recent messages considered before product-topic isolation |
 | `NEIGHBOR_CHUNKS` | `1` | Adjacent chunks attached around every retrieved match |
 | `ENABLE_MULTILINGUAL_SEARCH` | `true` | Searches both the original question and English translation |
 | `ENABLE_LOCAL_CROSS_ENCODER` | `false` | Uses the optional dedicated local reranker |
 | `CROSS_ENCODER_MODEL` | `cross-encoder/ms-marco-MiniLM-L-6-v2` | Local reranking model |
 | `ENABLE_LOCAL_OCR` | `true` | Uses free local Tesseract OCR on low-text pages |
 | `OCR_MIN_PAGE_CHARACTERS` | `80` | Runs OCR when extracted page text is shorter than this |
+| `OCR_IMAGE_RICH_PAGES` | `true` | Also OCRs image-rich pages with limited extracted text |
+| `OCR_IMAGE_PAGE_CHARACTER_LIMIT` | `1200` | Maximum extracted characters for image-rich OCR |
 | `OCR_DPI` | `300` | Resolution used to render pages for OCR |
 | `OCR_LANGUAGE` | `eng` | Installed Tesseract language code or codes, such as `eng+sin` |
 | `TESSERACT_CMD` | empty | Optional full path to the Tesseract executable |
-| `DESCRIBE_PDF_IMAGES` | `false` | Enables paid model-based image and diagram descriptions |
+| `DESCRIBE_PDF_IMAGES` | `true` | Enables model-based extraction for images, diagrams, and visual tables |
+| `DESCRIBE_FULL_VISUAL_PAGES` | `true` | Renders visually complex/vector PDF pages for complete diagram extraction |
+| `VISION_PAGE_DPI` | `300` | Render resolution sent to the vision model |
+| `VISION_MAX_TOKENS` | `1400` | Maximum technical extraction length per visual page or image |
+| `VISION_PAGE_CHARACTER_LIMIT` | `1600` | Treats image-bearing pages below this text length as visual pages |
+| `MIN_VECTOR_DRAWINGS_FOR_VISUAL_PAGE` | `8` | Detects vector technical drawings that contain no embedded raster image |
+| `MAX_DESCRIBED_IMAGES_PER_PAGE` | `3` | Caps paid image descriptions per PDF page |
 
 Install the optional local cross-encoder with:
 
@@ -490,6 +499,17 @@ sms:<customerPhoneNumber>
 10. Save and validate WhatsApp integration.
 11. Save and validate SMS integration.
 12. Configure public webhook URLs in Meta and Twilio.
+
+For repeatable PDF-answer checks, edit `rag-service/evals/qa_regression.json` and run:
+
+```powershell
+cd rag-service
+$env:QA_COMPANY_ID="your-company-id"
+$env:RAG_SERVICE_URL="http://localhost:8000"
+python evals/run_regression.py
+```
+
+Each regression question is sent with empty history so results cannot leak between products.
 
 ## Future phases
 

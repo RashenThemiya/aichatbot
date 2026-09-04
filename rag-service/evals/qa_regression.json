@@ -1,0 +1,67 @@
+[
+  {
+    "id": "ic1220100_dead_battery",
+    "question": "At what battery voltage will IC1220100 recover from a dead battery?",
+    "expected_model": "IC1220100",
+    "expected_facts": [">3.0V"],
+    "forbidden_facts": ["10.5V"]
+  },
+  {
+    "id": "ic1230150_fuse",
+    "question": "What fuse rating is required for IC1230150?",
+    "expected_model": "IC1230150",
+    "expected_facts": ["450A"],
+    "forbidden_facts": ["300A"]
+  },
+  {
+    "id": "ic122055i_charger",
+    "question": "What charging current does IC122055I provide?",
+    "expected_model": "IC122055I",
+    "expected_facts": ["55A"],
+    "forbidden_facts": ["100A"]
+  },
+  {
+    "id": "ic121040_e05",
+    "question": "What does error E05 mean on IC121040?",
+    "expected_model": "IC121040",
+    "expected_facts": ["low battery voltage"],
+    "forbidden_facts": ["short-circuit protection"]
+  },
+  {
+    "id": "suresine_topic_switch",
+    "question": "What is the SureSine inverter?",
+    "history": [
+      "user: Where are the mounting holes on IC244090i?",
+      "assistant: Check the technical drawing."
+    ],
+    "expected_facts": ["pure sine wave"],
+    "forbidden_facts": ["mounting holes", "IC244090i"]
+  },
+  {
+    "id": "suresine_continuous_power",
+    "question": "What is the continuous power rating of the SureSine?",
+    "history": [
+      "user: What is the SureSine inverter?",
+      "assistant: The SureSine is a pure sine wave inverter."
+    ],
+    "expected_facts": ["300W"],
+    "forbidden_facts": []
+  },
+  {
+    "id": "suresine_ac_versions",
+    "question": "What AC output versions are available?",
+    "history": [
+      "user: What is the SureSine inverter?",
+      "assistant: The SureSine is a pure sine wave inverter."
+    ],
+    "expected_facts": ["115V", "60Hz", "220V", "50Hz"],
+    "forbidden_facts": []
+  },
+  {
+    "id": "ic244090i_mounting_drawing",
+    "question": "I am preparing to install my IC244090i inverter on a custom mounting board. Where are the mounting holes located on this specific unit?",
+    "expected_model": "IC244090i",
+    "expected_facts": ["four mounting holes", "top left corner", "bottom right corner"],
+    "forbidden_facts": []
+  }
+]

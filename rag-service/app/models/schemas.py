@@ -16,6 +16,12 @@ class DeleteDocumentRequest(BaseModel):
     document_id: str
 
 
+class UpdateDocumentActiveRequest(BaseModel):
+    company_id: str
+    document_id: str
+    is_active: bool
+
+
 class QueryRequest(BaseModel):
     company_id: str
     question: str
@@ -29,6 +35,7 @@ class SourceChunk(BaseModel):
     content: str
     score: float
     page_number: int | None = None
+    section_heading: str = ""
 
 
 class ClarificationSuggestion(BaseModel):

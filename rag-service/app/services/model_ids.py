@@ -7,6 +7,8 @@ import re
 # hyphens are formatting variants and are removed by normalization.
 _MODEL_PATTERN = re.compile(
     r"(?<![A-Za-z0-9])(?:"
+    r"[A-Za-z]{1,8}(?:-[A-Za-z0-9]{1,12}){2,6}"
+    r"|"
     r"(?:[A-Za-z]{1,8}-){1,5}[A-Za-z]{1,8}\s*\d{2,}[A-Za-z0-9]*(?:-[A-Za-z0-9]+)*"
     r"|[A-Za-z]{1,8}\s+\d{2,}[A-Za-z0-9]*(?:-[A-Za-z0-9]+)*"
     r"|[A-Za-z]{1,12}\d{2,}[A-Za-z0-9]*(?:-[A-Za-z0-9]+)*"
@@ -18,7 +20,7 @@ _NON_MODEL_PREFIXES = {
     "PAGE", "SOURCE", "FIGURE", "TABLE", "SECTION", "STEP", "OPTION",
     "ERROR", "CODE", "HTTP", "HTTPS", "ISBN", "YEAR",
     "MANUAL", "GUIDE", "DATASHEET", "DOCUMENT", "PRODUCT", "VERSION",
-    "AT", "FUSE", "BATTERY", "INPUT", "OUTPUT", "VOLTAGE", "CURRENT",
+    "AT", "EN", "PA", "FUSE", "BATTERY", "INPUT", "OUTPUT", "VOLTAGE", "CURRENT",
     "POWER", "RATING", "MAX", "MIN", "TEMPERATURE", "TEMP", "PORT",
     "PIN", "CHARGE", "CHARGER", "CAPACITY", "FREQUENCY",
 }

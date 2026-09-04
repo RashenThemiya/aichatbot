@@ -53,6 +53,15 @@ class ModelIdTests(unittest.TestCase):
             extract_model_ids("Use the S6-GC30K-LV-US installation manual."),
         )
 
+    def test_suresine_versions_are_models_but_standards_and_addresses_are_not(self):
+        self.assertEqual(
+            extract_model_ids(
+                "SureSine SI-300-115V-UL and SI-300-220V comply with "
+                "EN 60950-1. The office is in Newtown, PA 18940."
+            ),
+            {"SI300115VUL", "SI300220V"},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

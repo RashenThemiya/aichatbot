@@ -11,15 +11,23 @@ const DEFAULTS = {
   launcherIcon: "bot",
   position: "right",
   apiKey: "",
-  showFeedback: false,
 };
 
+function sessionStorageKey(companyId) {
+  return `rag_widget_session_${companyId}`;
+}
+
+function createSessionId(companyId) {
+  const value = `web_${crypto.randomUUID()}`;
+  localStorage.setItem(sessionStorageKey(companyId), value);
+  return value;
+}
+
 function getSessionId(companyId) {
-  const key = `rag_widget_session_${companyId}`;
+  const key = sessionStorageKey(companyId);
   let value = localStorage.getItem(key);
   if (!value) {
-    value = `web_${crypto.randomUUID()}`;
-    localStorage.setItem(key, value);
+    value = createSessionId(companyId);
   }
   return value;
 }
@@ -76,7 +84,7 @@ function createStyle(config) {
     .ragw-header-copy{min-width:0}
     .ragw-title{font-size:15px;font-weight:800;margin:0}
     .ragw-subtitle{font-size:12px;opacity:.82;margin:3px 0 0}
-    .ragw-close{display:grid;flex:0 0 auto;width:28px;height:28px;padding:0;border:0;border-radius:999px;background:transparent;color:inherit;font-size:22px;line-height:1;cursor:pointer;place-items:center}.ragw-close:hover{background:rgba(127,127,127,.14)}
+    .ragw-header-actions{display:flex;align-items:center;gap:4px}.ragw-new-chat,.ragw-close{display:grid;flex:0 0 auto;height:28px;padding:0 8px;border:0;border-radius:999px;background:transparent;color:inherit;line-height:1;cursor:pointer;place-items:center}.ragw-new-chat{font-size:12px}.ragw-close{width:28px;padding:0;font-size:22px}.ragw-new-chat:hover,.ragw-close:hover{background:rgba(127,127,127,.14)}
     .ragw-messages{flex:1;overflow:auto;padding:14px;background:#f6f8fb}
     .ragw-msg{max-width:88%;padding:11px 13px;margin:0 0 12px;border-radius:12px;font-size:14px;line-height:1.55;box-shadow:0 2px 8px rgba(15,23,42,.05)}
     .ragw-user{margin-left:auto;background:${sendButtonColor};color:#fff}
@@ -85,9 +93,6 @@ function createStyle(config) {
     .ragw-suggestions{display:grid;gap:6px;margin-top:10px}.ragw-suggestion{width:100%;border:1px solid #cbd5e1;border-radius:7px;background:#f8fafc;color:#1e293b;padding:8px 9px;text-align:left;font:inherit;font-size:12px;line-height:1.35;cursor:pointer}.ragw-suggestion:hover{border-color:${sendButtonColor};background:#f1f5f9}.ragw-suggestion:disabled{opacity:.55;cursor:not-allowed}
     .ragw-line{min-height:1em;margin:0 0 5px}.ragw-line:last-child{margin-bottom:0}
     .ragw-list{padding-left:18px;margin:6px 0}.ragw-list li{margin:3px 0}
-    .ragw-feedback{display:flex;align-items:center;gap:6px;margin-top:9px;padding-top:8px;border-top:1px solid #eef2f7;color:#64748b;font-size:11px}
-    .ragw-feedback button{border:1px solid #dbe3ed;background:#fff;border-radius:6px;padding:4px 7px;cursor:pointer;color:#475569}
-    .ragw-feedback button:hover,.ragw-feedback button.ragw-selected{border-color:#94a3b8;background:#f1f5f9;color:#0f172a}
     .ragw-typing{display:flex;gap:4px;align-items:center;width:48px}
     .ragw-dot{width:6px;height:6px;border-radius:50%;background:#94a3b8;animation:ragw-pulse 1.2s infinite}
     .ragw-dot:nth-child(2){animation-delay:.15s}.ragw-dot:nth-child(3){animation-delay:.3s}
@@ -166,27 +171,6 @@ function messageNode(role, text, sources = [], feedbackOptions = null, suggestio
     }
     node.appendChild(choices);
   }
-  if (
-    role !== "user"
-    && feedbackOptions?.showFeedback
-    && suggestions.length === 0
-  ) {
-    const feedback = document.createElement("div");
-    feedback.className = "ragw-feedback";
-    feedback.appendChild(document.createTextNode("Was this helpful?"));
-    for (const [value, label] of [["helpful", "👍 Yes"], ["not_helpful", "👎 No"]]) {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.textContent = label;
-      button.addEventListener("click", async () => {
-        feedback.querySelectorAll("button").forEach((item) => item.classList.remove("ragw-selected"));
-        button.classList.add("ragw-selected");
-        await feedbackOptions.onFeedback(value);
-      });
-      feedback.appendChild(button);
-    }
-    node.appendChild(feedback);
-  }
   return node;
 }
 
@@ -233,18 +217,6 @@ async function loadHistory(config, sessionId) {
   return data;
 }
 
-async function sendFeedback(config, conversationId, feedback) {
-  if (!conversationId) return;
-  await fetch(`${config.apiBaseUrl}/widget/companies/${config.companyId}/chat/feedback`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Widget-API-Key": config.apiKey,
-    },
-    body: JSON.stringify({ conversationId, feedback }),
-  });
-}
-
 function initWidget(options = {}) {
   const config = { ...DEFAULTS, ...window.RAG_CHAT_WIDGET, ...options };
   if (!config.companyId) {
@@ -253,7 +225,7 @@ function initWidget(options = {}) {
   }
 
   createStyle(config);
-  const sessionId = getSessionId(config.companyId);
+  let sessionId = getSessionId(config.companyId);
   const root = document.createElement("div");
   root.className = "ragw-root";
   root.innerHTML = `
@@ -263,7 +235,10 @@ function initWidget(options = {}) {
           <p class="ragw-title"></p>
           <p class="ragw-subtitle"></p>
         </div>
-        <button class="ragw-close" type="button" aria-label="Close chat">&times;</button>
+        <div class="ragw-header-actions">
+          <button class="ragw-new-chat" type="button" aria-label="Start a new chat">New chat</button>
+          <button class="ragw-close" type="button" aria-label="Close chat">&times;</button>
+        </div>
       </header>
       <div class="ragw-messages"></div>
       <form class="ragw-form">
@@ -281,6 +256,7 @@ function initWidget(options = {}) {
   const form = root.querySelector(".ragw-form");
   const send = root.querySelector(".ragw-send");
   const toggle = root.querySelector(".ragw-button");
+  const newChat = root.querySelector(".ragw-new-chat");
   const close = root.querySelector(".ragw-close");
   let historyReady = false;
   input.disabled = true;
@@ -295,16 +271,16 @@ function initWidget(options = {}) {
     const typing = typingNode();
     messages.appendChild(typing);
     messages.scrollTop = messages.scrollHeight;
+    const requestSessionId = sessionId;
     try {
-      const result = await sendMessage(config, text, sessionId, { isSuggestion });
+      const result = await sendMessage(config, text, requestSessionId, { isSuggestion });
+      if (sessionId !== requestSessionId) return;
       typing.remove();
       messages.appendChild(messageNode(
         "bot",
         result.answer,
         result.sources || [],
         {
-          showFeedback: config.showFeedback,
-          onFeedback: (feedback) => sendFeedback(config, result.conversationId, feedback),
           onSuggestion: (message, label) => submitMessage(
             message,
             label,
@@ -314,6 +290,7 @@ function initWidget(options = {}) {
         result.suggestions || []
       ));
     } catch (error) {
+      if (sessionId !== requestSessionId) return;
       typing.remove();
       messages.appendChild(messageNode("bot", error.message || "Unable to send message."));
     } finally {
@@ -323,6 +300,12 @@ function initWidget(options = {}) {
   }
 
   toggle.addEventListener("click", () => root.classList.toggle("ragw-open"));
+  newChat.addEventListener("click", () => {
+    sessionId = createSessionId(config.companyId);
+    messages.replaceChildren(messageNode("bot", config.greeting || "Hi, how can I help?"));
+    input.value = "";
+    input.focus();
+  });
   close.addEventListener("click", () => root.classList.remove("ragw-open"));
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -344,17 +327,10 @@ function initWidget(options = {}) {
       }
 
       for (const savedMessage of savedMessages) {
-        const isAssistant = savedMessage.role === "assistant";
         messages.appendChild(messageNode(
           savedMessage.role,
           savedMessage.content,
-          savedMessage.sources || [],
-          isAssistant
-            ? {
-                showFeedback: config.showFeedback,
-                onFeedback: (feedback) => sendFeedback(config, history._id, feedback),
-              }
-            : null
+          savedMessage.sources || []
         ));
       }
     } catch (error) {

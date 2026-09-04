@@ -1014,49 +1014,27 @@ ${widgetScriptSrc()}`;
 
     const failures = [];
     let uploaded = 0;
-    let reindexed = 0;
     let skipped = 0;
 
     try {
-      // Match by the same relative path stored by the backend. This makes
-      // selecting the same folder a safe resume operation instead of creating
-      // duplicate document records.
-      const currentDocuments = await api.documents.list(selectedCompany._id);
       const normalizeDocumentName = (value) => String(value || "")
         .replace(/\\/g, "/")
         .split("/")
         .filter((part) => part && part !== "." && part !== "..")
         .join("/");
-      const documentsByName = new Map();
-      const statusPriority = { indexed: 3, indexing: 2, failed: 1 };
-      for (const document of currentDocuments) {
-        const name = normalizeDocumentName(document.originalName);
-        const existing = documentsByName.get(name);
-        if (
-          !existing
-          || (statusPriority[document.status] || 0) > (statusPriority[existing.status] || 0)
-        ) {
-          documentsByName.set(name, document);
-        }
-      }
-
       for (const [index, file] of files.entries()) {
         const relativeName = normalizeDocumentName(file.webkitRelativePath || file.name);
-        const existing = documentsByName.get(relativeName);
         setUploadProgress({ current: index + 1, total: files.length, fileName: relativeName });
         try {
-          if (existing?.status === "indexed" || existing?.status === "indexing") {
-            skipped += 1;
-          } else if (existing?.status === "failed") {
-            await api.documents.reindex(selectedCompany._id, existing._id);
-            reindexed += 1;
-          } else {
-            await api.documents.upload(selectedCompany._id, [file]);
-            uploaded += 1;
-          }
+          await api.documents.upload(selectedCompany._id, [file]);
+          uploaded += 1;
         } catch (err) {
-          console.error("[task] error upload or reindex", relativeName, err);
-          failures.push({ fileName: relativeName, message: err.message || "Indexing failed" });
+          if (err.status === 409 && err.data?.duplicate) {
+            skipped += 1;
+          } else {
+            console.error("[task] error upload", relativeName, err);
+            failures.push({ fileName: relativeName, message: err.message || "Indexing failed" });
+          }
         }
       }
 
@@ -1065,8 +1043,7 @@ ${widgetScriptSrc()}`;
 
       const successParts = [];
       if (uploaded) successParts.push(`${uploaded} new document${uploaded === 1 ? "" : "s"} uploaded`);
-      if (reindexed) successParts.push(`${reindexed} failed document${reindexed === 1 ? "" : "s"} reindexed`);
-      if (skipped) successParts.push(`${skipped} indexed document${skipped === 1 ? "" : "s"} skipped`);
+      if (skipped) successParts.push(`${skipped} exact duplicate${skipped === 1 ? "" : "s"} skipped`);
       if (successParts.length > 0) {
         setNotice(successParts.join(", "));
       }
@@ -1080,30 +1057,6 @@ ${widgetScriptSrc()}`;
     } finally {
       setLoading((current) => ({ ...current, upload: false }));
       setUploadProgress(null);
-    }
-  }
-
-  async function handleWidgetFeedback(messageIndex, feedback) {
-    const message = widgetTestMessages[messageIndex];
-    if (!message?.conversationId || !selectedCompany) return;
-    setWidgetTestMessages((current) =>
-      current.map((item, index) => index === messageIndex ? { ...item, feedback } : item)
-    );
-    try {
-      const response = await fetch(
-        `${api.baseUrl}/widget/companies/${selectedCompany._id}/chat/feedback`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Widget-API-Key": widgetApiKeyInput.trim(),
-          },
-          body: JSON.stringify({ conversationId: message.conversationId, feedback }),
-        }
-      );
-      if (!response.ok) throw new Error("Unable to save feedback");
-    } catch (err) {
-      setError(err.message);
     }
   }
 
@@ -1221,14 +1174,49 @@ ${widgetScriptSrc()}`;
     }
   }
 
-  async function handleChatFeedback(feedback) {
-    if (!selectedCompany || !chatResult?.conversationId) return;
-    setChatResult((current) => ({ ...current, feedback }));
-    try {
-      await api.chat.feedback(selectedCompany._id, chatResult.conversationId, feedback);
-    } catch (err) {
-      setError(err.message || "Unable to save feedback");
+  async function handleBulkReindexDocuments() {
+    if (!selectedCompany || selectedDocumentIds.length === 0) return;
+    const result = await runTask(
+      "documents",
+      async () => {
+        const failures = [];
+        for (const documentId of selectedDocumentIds) {
+          try {
+            await api.documents.reindex(selectedCompany._id, documentId);
+          } catch (err) {
+            if (!(err.status === 409 && err.data?.duplicate)) failures.push(err);
+          }
+        }
+        if (failures.length) {
+          throw new Error(`${failures.length} document reindex operation(s) failed`);
+        }
+        return true;
+      },
+      `${selectedDocumentIds.length} document${selectedDocumentIds.length === 1 ? "" : "s"} reindexed`
+    );
+    if (result) {
+      setSelectedDocumentIds([]);
+      await loadDocuments();
     }
+  }
+
+  async function handleDocumentActive(document) {
+    const result = await runTask(
+      "documents",
+      () => api.documents.setActive(
+        selectedCompany._id,
+        document._id,
+        !document.isActive
+      ),
+      document.isActive ? "Document deactivated" : "Document activated"
+    );
+    if (result) await loadDocuments();
+  }
+
+  function handleNewChatSession() {
+    setChatSessionId("");
+    setChatResult(null);
+    setChatMessage("");
   }
 
   async function handleConversationSearch(event) {
@@ -1459,31 +1447,6 @@ ${widgetScriptSrc()}`;
                               {suggestion.label}
                             </button>
                           ))}
-                        </div>
-                      )}
-                      {message.role === "assistant" && message.conversationId && message.suggestions?.length === 0 && (
-                        <div className="flex items-center gap-2 pt-2 mt-2 text-xs border-t border-slate-200 text-slate-500">
-                          <span>Was this helpful?</span>
-                          <button
-                            type="button"
-                            onClick={() => handleWidgetFeedback(index, "helpful")}
-                            className={classNames(
-                              "rounded border px-2 py-1",
-                              message.feedback === "helpful" ? "border-slate-400 bg-slate-100 text-slate-900" : "border-slate-200"
-                            )}
-                          >
-                            👍 Yes
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleWidgetFeedback(index, "not_helpful")}
-                            className={classNames(
-                              "rounded border px-2 py-1",
-                              message.feedback === "not_helpful" ? "border-slate-400 bg-slate-100 text-slate-900" : "border-slate-200"
-                            )}
-                          >
-                            👎 No
-                          </button>
                         </div>
                       )}
                     </div>
@@ -2528,6 +2491,17 @@ ${widgetScriptSrc()}`;
                       {selectedDocumentIds.length > 0 && (
                         <button
                           type="button"
+                          onClick={handleBulkReindexDocuments}
+                          disabled={loading.documents}
+                          className="inline-flex items-center justify-center gap-2 px-3 text-sm font-semibold transition bg-white border rounded shadow-sm h-9 border-slate-200 text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          <RefreshCcw size={16} />
+                          Reindex selected ({selectedDocumentIds.length})
+                        </button>
+                      )}
+                      {selectedDocumentIds.length > 0 && (
+                        <button
+                          type="button"
                           onClick={handleBulkDownloadDocuments}
                           disabled={loading.download}
                           className="inline-flex items-center justify-center gap-2 px-3 text-sm font-semibold transition bg-white border rounded shadow-sm h-9 border-slate-200 text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
@@ -2646,17 +2620,39 @@ ${widgetScriptSrc()}`;
                               <td className="w-16 px-4 py-3 font-medium tabular-nums text-slate-500">{index + 1}</td>
                               <td className="max-w-[320px] px-4 py-3">
                                 <div className="font-medium truncate text-slate-900">{document.originalName}</div>
+                                <div className="mt-1 text-xs text-slate-500">
+                                  Version {document.documentVersion || "1"}
+                                </div>
+                                {document.duplicateOf && (
+                                  <div className="mt-1 text-xs text-amber-700">Exact duplicate</div>
+                                )}
                                 {document.indexError && (
                                   <div className="mt-1 text-xs truncate text-rose-600">{document.indexError}</div>
                                 )}
                               </td>
                               <td className="px-4 py-3">
-                                <StatusBadge status={document.status} />
+                                <div className="flex flex-wrap gap-1">
+                                  <StatusBadge status={document.status} />
+                                  <span className={classNames(
+                                    "rounded-full px-2 py-0.5 text-xs font-medium",
+                                    document.isActive
+                                      ? "bg-emerald-100 text-emerald-700"
+                                      : "bg-slate-100 text-slate-500"
+                                  )}>
+                                    {document.isActive ? "active" : "superseded"}
+                                  </span>
+                                </div>
                               </td>
                               <td className="px-4 py-3 text-slate-600">{document.chunksIndexed || 0}</td>
                               <td className="px-4 py-3 text-slate-600">{formatDate(document.updatedAt)}</td>
                               <td className="px-4 py-3">
                                 <div className="flex justify-end gap-2">
+                                  <IconButton
+                                    title={document.isActive ? "Deactivate version" : "Activate version"}
+                                    onClick={() => handleDocumentActive(document)}
+                                  >
+                                    {document.isActive ? <XCircle size={16} /> : <CheckCircle2 size={16} />}
+                                  </IconButton>
                                   <IconButton title="Reindex" onClick={() => handleReindex(document._id)}>
                                     <RefreshCcw size={16} />
                                   </IconButton>
@@ -2702,10 +2698,15 @@ ${widgetScriptSrc()}`;
                         required
                       />
                     </Field>
-                    <PrimaryButton type="submit" className="w-full" disabled={loading.chat}>
-                      {loading.chat ? <Loader2 className="animate-spin" size={16} /> : <Send size={16} />}
-                      Send
-                    </PrimaryButton>
+                    <div className="flex gap-2">
+                      <PrimaryButton type="submit" className="flex-1" disabled={loading.chat}>
+                        {loading.chat ? <Loader2 className="animate-spin" size={16} /> : <Send size={16} />}
+                        Send
+                      </PrimaryButton>
+                      <SecondaryButton type="button" onClick={handleNewChatSession}>
+                        New session
+                      </SecondaryButton>
+                    </div>
                   </form>
                   {chatResult && (
                     <div className="p-4 border-t border-slate-200">
@@ -2713,23 +2714,6 @@ ${widgetScriptSrc()}`;
                         Answer
                       </div>
                       <div className="text-slate-800"><FormattedAnswer text={chatResult.answer} /></div>
-                      <div className="flex items-center gap-2 mt-4 text-xs text-slate-500">
-                        <span>Was this helpful?</span>
-                        <button
-                          type="button"
-                          onClick={() => handleChatFeedback("helpful")}
-                          className={classNames("rounded border px-2 py-1", chatResult.feedback === "helpful" ? "border-slate-400 bg-slate-100" : "border-slate-200")}
-                        >
-                          👍 Helpful
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleChatFeedback("not_helpful")}
-                          className={classNames("rounded border px-2 py-1", chatResult.feedback === "not_helpful" ? "border-slate-400 bg-slate-100" : "border-slate-200")}
-                        >
-                          👎 Not helpful
-                        </button>
-                      </div>
                       <div className="mt-4 text-xs text-slate-500">Session: {chatResult.sessionId}</div>
                       <ChatDiagnostics diagnostics={chatResult.diagnostics} />
                       <div className="mt-4 space-y-2">

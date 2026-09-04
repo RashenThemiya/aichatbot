@@ -180,6 +180,12 @@ export const api = {
       request(`/api/companies/${companyId}/documents/${documentId}/reindex`, {
         method: "POST",
       }),
+    setActive: (companyId, documentId, isActive) =>
+      request(`/api/companies/${companyId}/documents/${documentId}/active`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isActive }),
+      }),
     remove: (companyId, documentId) =>
       request(`/api/companies/${companyId}/documents/${documentId}`, {
         method: "DELETE",

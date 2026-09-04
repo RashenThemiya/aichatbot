@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     minimum_relevance_score: float = 0.25
     enable_reranking: bool = True
     enable_answer_verification: bool = True
+    enable_numeric_verification: bool = True
     conversation_history_messages: int = 16
     max_clarification_rounds: int = 2
     neighbor_chunks: int = 1
@@ -23,10 +24,18 @@ class Settings(BaseSettings):
     cross_encoder_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
     rag_service_port: int = 8000
     openai_vision_model: str = "gpt-4o-mini"
-    describe_pdf_images: bool = False
+    describe_pdf_images: bool = True
+    describe_full_visual_pages: bool = True
+    vision_page_dpi: int = 300
+    vision_max_tokens: int = 1400
+    vision_page_character_limit: int = 1600
+    min_vector_drawings_for_visual_page: int = 8
     min_image_size: int = 80  # px, skips tiny icons/bullets from triggering vision calls
+    max_described_images_per_page: int = 3
     enable_local_ocr: bool = True
     ocr_min_page_characters: int = 80
+    ocr_image_rich_pages: bool = True
+    ocr_image_page_character_limit: int = 1200
     ocr_dpi: int = 300
     ocr_language: str = "eng"
     tesseract_cmd: str = ""

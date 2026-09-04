@@ -1,4 +1,5 @@
 const axios = require("axios");
+const crypto = require("crypto");
 const config = require("../config");
 
 const client = axios.create({
@@ -27,7 +28,8 @@ function normalizeQuestion(question) {
 }
 
 function buildQueryCacheKey({ companyId, question, topK, history }) {
-  const historyKey = (history || []).slice(-2).join("\n").toLowerCase();
+  const historyText = (history || []).slice(-16).join("\n").toLowerCase();
+  const historyKey = crypto.createHash("sha256").update(historyText).digest("hex");
   return JSON.stringify({
     companyId,
     question: normalizeQuestion(question),
@@ -36,7 +38,7 @@ function buildQueryCacheKey({ companyId, question, topK, history }) {
   });
 }
 
-function rememberQuery(cacheKey, data) {
+function rememberQuery(cacheKey, data, companyId) {
   if (queryCacheTtlMs <= 0 || !data?.answer) return;
 
   while (queryCache.size >= queryCacheMaxEntries) {
@@ -47,8 +49,16 @@ function rememberQuery(cacheKey, data) {
 
   queryCache.set(cacheKey, {
     data,
+    companyId: String(companyId),
     expiresAt: Date.now() + queryCacheTtlMs,
   });
+}
+
+function invalidateCompanyCache(companyId) {
+  const target = String(companyId);
+  for (const [key, cached] of queryCache.entries()) {
+    if (cached.companyId === target) queryCache.delete(key);
+  }
 }
 
 async function ingestDocument({
@@ -74,6 +84,7 @@ async function ingestDocument({
   for (let attempt = 1; attempt <= ingestMaxAttempts; attempt += 1) {
     try {
       const { data } = await client.post("/ingest", payload);
+      invalidateCompanyCache(companyId);
       return data;
     } catch (error) {
       lastError = error;
@@ -91,6 +102,17 @@ async function deleteDocumentVectors({ companyId, documentId }) {
       document_id: documentId,
     },
   });
+  invalidateCompanyCache(companyId);
+  return data;
+}
+
+async function setDocumentActive({ companyId, documentId, isActive }) {
+  const { data } = await client.patch("/documents/active", {
+    company_id: companyId,
+    document_id: documentId,
+    is_active: isActive,
+  });
+  invalidateCompanyCache(companyId);
   return data;
 }
 
@@ -114,7 +136,7 @@ async function queryKnowledge({ companyId, question, topK, history }) {
     history: history || [],
   });
 
-  rememberQuery(cacheKey, data);
+  rememberQuery(cacheKey, data, companyId);
 
   return data;
 }
@@ -127,6 +149,8 @@ async function checkHealth() {
 module.exports = {
   ingestDocument,
   deleteDocumentVectors,
+  setDocumentActive,
   queryKnowledge,
   checkHealth,
+  invalidateCompanyCache,
 };

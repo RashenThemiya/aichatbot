@@ -134,6 +134,7 @@ function mapSources(ragSources = []) {
     content: source.content,
     score: source.score,
     pageNumber: source.page_number,
+    sectionHeading: source.section_heading || "",
   }));
 }
 

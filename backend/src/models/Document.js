@@ -28,6 +28,13 @@ const documentSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+    contentHash: { type: String, default: "", index: true },
+    documentKey: { type: String, default: "", index: true },
+    duplicateOf: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Document",
+      default: null,
+    },
     status: {
       type: String,
       enum: ["pending", "indexing", "indexed", "failed"],
@@ -47,5 +54,8 @@ const documentSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+documentSchema.index({ companyId: 1, contentHash: 1 });
+documentSchema.index({ companyId: 1, documentKey: 1, isActive: 1 });
 
 module.exports = mongoose.model("Document", documentSchema);
