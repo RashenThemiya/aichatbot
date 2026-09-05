@@ -105,7 +105,14 @@ async function createRagReply(incomingMessage) {
   if (preprocessed.type === "small_talk") {
     answer = formatSmsReply(preprocessed.reply);
   } else {
-    const ragResult = await ragClient.queryKnowledge({ companyId: company._id.toString(), question: preprocessed.question });
+    const ragContext = ragClient.buildConversationRagContext(
+      conversation.messages.slice(0, -1)
+    );
+    const ragResult = await ragClient.queryKnowledge({
+      companyId: company._id.toString(),
+      question: preprocessed.question,
+      ...ragContext,
+    });
     sources = mapSources(ragResult.sources);
     answer = formatSmsReply(ragResult.answer || "I could not find an answer for that yet.");
   }

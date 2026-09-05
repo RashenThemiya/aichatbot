@@ -4,6 +4,7 @@ from app.services.pdf_processor import (
     PdfPage,
     _merge_extracted_text,
     _is_visual_page,
+    _is_usable_table,
     _extract_page_text,
     _extract_tables,
     _split_long_unit,
@@ -93,6 +94,36 @@ class PdfProcessorTests(unittest.TestCase):
 
         self.assertEqual(len(tables), 1)
         self.assertEqual(page.calls, 1)
+
+    def test_long_two_column_prose_is_not_treated_as_a_table(self):
+        rows = (
+            ("Installation", "This is a very long prose paragraph " * 12),
+            ("Operation", "Another long prose paragraph " * 12),
+        )
+
+        self.assertFalse(_is_usable_table(rows, borderless=True))
+
+    def test_fragmented_borderless_page_layout_is_not_a_table(self):
+        rows = (
+            ("S S UN", "AVER"),
+            ("PV SYSTEM CO", "NTROLLERS"),
+            ("Installation and O", "peration Manual"),
+        )
+
+        self.assertFalse(_is_usable_table(rows, borderless=True))
+
+    def test_vision_chunks_are_separate_and_lower_confidence(self):
+        chunks = chunk_pages([PdfPage(
+            page_number=4,
+            text=(
+                "Electrical Specifications\n\nContinuous power is 300 W.\n\n"
+                "[Visual page extraction]\nFour mounting holes are visible."
+            ),
+        )])
+
+        self.assertEqual({chunk.evidence_type for chunk in chunks}, {"text", "vision"})
+        vision = next(chunk for chunk in chunks if chunk.evidence_type == "vision")
+        self.assertLess(vision.evidence_confidence, 1.0)
 
 
 if __name__ == "__main__":

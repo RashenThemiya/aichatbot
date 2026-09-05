@@ -166,9 +166,13 @@ async function createRagReply(incomingMessage) {
     };
   }
 
+  const ragContext = ragClient.buildConversationRagContext(
+    conversation.messages.slice(0, -1)
+  );
   const ragResult = await ragClient.queryKnowledge({
     companyId: company._id.toString(),
     question: preprocessed.question,
+    ...ragContext,
   });
 
   const sources = mapSources(ragResult.sources);

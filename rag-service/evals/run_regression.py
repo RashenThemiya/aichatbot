@@ -12,6 +12,7 @@ from urllib.error import HTTPError, URLError
 def normalized(value: str) -> str:
     text = str(value or "").casefold()
     text = re.sub(r"\b(?:above|more\s+than)\b", ">", text)
+    text = re.sub(r"\b(?:below|less\s+than)\b", "<", text)
     text = re.sub(r"\bat\s+least\b", ">=", text)
     text = re.sub(r"\bwatts?\b", "w", text)
     text = re.sub(r"\bvolts?\b", "v", text)
@@ -64,6 +65,12 @@ def main() -> int:
         expected_model = normalized(case.get("expected_model", ""))
         if expected_model and expected_model not in normalized(source_names):
             reasons.append("source is not from the expected model")
+        expected_source = normalized(case.get("expected_source", ""))
+        if expected_source and expected_source not in normalized(source_names):
+            reasons.append(f"missing expected source: {case['expected_source']}")
+        for forbidden_source in case.get("forbidden_sources", []):
+            if normalized(forbidden_source) in normalized(source_names):
+                reasons.append(f"included forbidden source: {forbidden_source}")
         if result.get("suggestions"):
             reasons.append("unexpected clarification suggestions")
 

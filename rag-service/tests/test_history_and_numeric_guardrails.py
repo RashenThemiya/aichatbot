@@ -63,6 +63,50 @@ class HistoryAndNumericGuardrailTests(unittest.TestCase):
         self.assertNotIn("IC244090i", joined)
         self.assertIn("SureSine", joined)
 
+    def test_supported_system_voltage_question_requires_history(self):
+        self.assertTrue(RAGEngine._question_requires_history(
+            "What system voltages are supported?"
+        ))
+
+    def test_controller_self_consumption_question_requires_history(self):
+        self.assertTrue(RAGEngine._question_requires_history(
+            "What is the controller self-consumption?"
+        ))
+
+    def test_generic_l_model_purpose_question_requires_history(self):
+        self.assertTrue(RAGEngine._question_requires_history(
+            "What is the purpose of low-voltage load disconnect on L models?"
+        ))
+
+    def test_generic_safety_rule_question_requires_history(self):
+        self.assertTrue(RAGEngine._question_requires_history(
+            "What safety rule applies to the PV array voltage?"
+        ))
+
+    def test_model_list_question_is_detected(self):
+        self.assertTrue(RAGEngine._is_model_list_question(
+            "What SunSaver models are available?"
+        ))
+        self.assertFalse(RAGEngine._is_model_list_question(
+            "What voltage is available?"
+        ))
+
+    def test_named_product_family_question_starts_a_new_topic(self):
+        self.assertFalse(RAGEngine._question_requires_history(
+            "What system voltages does SunSaver support?"
+        ))
+
+    def test_duplicate_chunks_from_one_pdf_become_one_display_source(self):
+        chunks = [
+            {"document_id": "sun", "document_name": "operation-manual-.pdf", "page": 2},
+            {"document_id": "sun", "document_name": "operation-manual-.pdf", "page": 23},
+            {"document_id": "other", "document_name": "other.pdf", "page": 1},
+        ]
+
+        deduplicated = RAGEngine._deduplicate_source_documents(chunks)
+
+        self.assertEqual([item["document_id"] for item in deduplicated], ["sun", "other"])
+
     def test_wrong_numeric_value_is_rejected(self):
         retrieved = [{"content": "The IC1230150 fuse rating is 450 A."}]
 
@@ -72,6 +116,25 @@ class HistoryAndNumericGuardrailTests(unittest.TestCase):
         )
 
         self.assertEqual(unsupported, [("", "300", "a")])
+
+    def test_voltage_suffix_inside_model_id_is_not_a_numeric_claim(self):
+        claims = RAGEngine._numeric_claims(
+            "Models SS-6-12V, SS-10L-24V, and SI-300-115V-UL are available."
+        )
+
+        self.assertEqual(claims, set())
+
+    def test_invented_model_id_is_rejected_against_cited_source(self):
+        retrieved = [{
+            "content": "Models included: SS-6-12V and SS-20L-24V."
+        }]
+
+        unsupported = RAGEngine._unsupported_model_ids(
+            "Models are SS-6-12V and SS-30L-24V [Source 1].",
+            retrieved,
+        )
+
+        self.assertEqual(unsupported, ["SS30L24V"])
 
     def test_uncited_numeric_value_is_rejected(self):
         retrieved = [{"content": "The fuse rating is 450 A."}]

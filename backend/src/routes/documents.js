@@ -61,6 +61,82 @@ async function ensureCompany(companyId) {
   return Company.findById(companyId);
 }
 
+async function reindexStoredDocument(companyId, doc) {
+  if (!fs.existsSync(doc.filePath)) {
+    doc.status = "failed";
+    doc.indexError = "PDF file missing on disk";
+    await doc.save();
+    return { ok: false, statusCode: 404, error: doc.indexError, document: doc };
+  }
+
+  try {
+    const contentHash = await hashFile(doc.filePath);
+    const duplicateCandidates = await Document.find({
+      _id: { $ne: doc._id },
+      companyId,
+      contentHash,
+    });
+    const canonical = [doc, ...duplicateCandidates].sort((left, right) => {
+      if (left.isActive !== right.isActive) return left.isActive ? -1 : 1;
+      const createdDifference = new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime();
+      return createdDifference || String(left._id).localeCompare(String(right._id));
+    })[0];
+    const duplicate = String(canonical._id) === String(doc._id) ? null : canonical;
+    doc.contentHash = contentHash;
+    doc.documentKey = doc.documentKey || documentKey(doc.originalName);
+    if (duplicate) {
+      doc.isActive = false;
+      doc.duplicateOf = duplicate._id;
+      doc.status = "indexed";
+      doc.indexError = null;
+      await doc.save();
+      await ragClient.setDocumentActive({
+        companyId,
+        documentId: doc._id.toString(),
+        isActive: false,
+      });
+      return {
+        ok: false,
+        skipped: true,
+        statusCode: 409,
+        error: `Exact duplicate of ${duplicate.originalName}`,
+        document: doc,
+      };
+    }
+
+    doc.duplicateOf = null;
+    doc.status = "indexing";
+    doc.indexError = null;
+    await doc.save();
+
+    const result = await ragClient.ingestDocument({
+      companyId,
+      documentId: doc._id.toString(),
+      filePath: doc.filePath,
+      documentName: doc.originalName,
+      documentVersion: doc.documentVersion,
+      effectiveDate: doc.effectiveDate?.toISOString() || "",
+      isActive: doc.isActive,
+    });
+
+    doc.status = "indexed";
+    doc.chunksIndexed = result.chunks_indexed;
+    doc.indexError = null;
+    await doc.save();
+    return { ok: true, statusCode: 200, document: doc };
+  } catch (indexErr) {
+    doc.status = "failed";
+    doc.indexError = indexErr.response?.data?.detail || indexErr.message;
+    await doc.save();
+    return {
+      ok: false,
+      statusCode: indexErr.response?.status || 502,
+      error: doc.indexError,
+      document: doc,
+    };
+  }
+}
+
 async function createAndIndexDocument(
   company,
   file,
@@ -422,70 +498,57 @@ router.patch("/:documentId/active", async (req, res) => {
   }
 });
 
+router.post("/reindex-all", async (req, res) => {
+  try {
+    const documents = await Document.find({ companyId: req.params.companyId }).sort({
+      createdAt: 1,
+    });
+    const results = [];
+    for (const doc of documents) {
+      const result = await reindexStoredDocument(req.params.companyId, doc);
+      results.push({
+        documentId: doc._id.toString(),
+        documentName: doc.originalName,
+        status: result.ok ? "indexed" : result.skipped ? "skipped" : "failed",
+        chunksIndexed: result.document.chunksIndexed || 0,
+        error: result.error || "",
+      });
+    }
+
+    const indexedCount = results.filter((item) => item.status === "indexed").length;
+    const skippedCount = results.filter((item) => item.status === "skipped").length;
+    const failedCount = results.filter((item) => item.status === "failed").length;
+    return res.json({
+      message: `${indexedCount} of ${documents.length} documents reindexed`,
+      total: documents.length,
+      indexedCount,
+      skippedCount,
+      failedCount,
+      results,
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 router.post("/:documentId/reindex", async (req, res) => {
   try {
     const doc = await Document.findOne({
       _id: req.params.documentId,
       companyId: req.params.companyId,
     });
-    if (!doc) {
-      return res.status(404).json({ error: "Document not found" });
-    }
-    if (!fs.existsSync(doc.filePath)) {
-      return res.status(404).json({ error: "PDF file missing on disk" });
-    }
+    if (!doc) return res.status(404).json({ error: "Document not found" });
 
-    const contentHash = await hashFile(doc.filePath);
-    const duplicate = await Document.findOne({
-      _id: { $ne: doc._id },
-      companyId: req.params.companyId,
-      contentHash,
+    const result = await reindexStoredDocument(req.params.companyId, doc);
+    if (result.ok) return res.json(result.document);
+    return res.status(result.statusCode).json({
+      error: result.skipped ? result.error : "Reindex failed",
+      detail: result.error,
+      duplicate: Boolean(result.skipped),
+      document: result.document,
     });
-    doc.contentHash = contentHash;
-    doc.documentKey = doc.documentKey || documentKey(doc.originalName);
-    if (duplicate) {
-      doc.isActive = false;
-      doc.duplicateOf = duplicate._id;
-      await doc.save();
-      await ragClient.setDocumentActive({
-        companyId: req.params.companyId,
-        documentId: doc._id.toString(),
-        isActive: false,
-      });
-      return res.status(409).json({
-        error: `Exact duplicate of ${duplicate.originalName}`,
-        duplicate: true,
-        document: doc,
-      });
-    }
-
-    doc.status = "indexing";
-    doc.indexError = null;
-    await doc.save();
-
-    try {
-      const result = await ragClient.ingestDocument({
-        companyId: req.params.companyId,
-        documentId: doc._id.toString(),
-        filePath: doc.filePath,
-        documentName: doc.originalName,
-        documentVersion: doc.documentVersion,
-        effectiveDate: doc.effectiveDate?.toISOString() || "",
-        isActive: doc.isActive,
-      });
-
-      doc.status = "indexed";
-      doc.chunksIndexed = result.chunks_indexed;
-      await doc.save();
-      res.json(doc);
-    } catch (indexErr) {
-      doc.status = "failed";
-      doc.indexError = indexErr.response?.data?.detail || indexErr.message;
-      await doc.save();
-      res.status(502).json({ error: "Reindex failed", detail: doc.indexError });
-    }
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
   }
 });
 

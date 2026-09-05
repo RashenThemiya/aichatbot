@@ -63,5 +63,49 @@
     "expected_model": "IC244090i",
     "expected_facts": ["four mounting holes", "top left corner", "bottom right corner"],
     "forbidden_facts": []
+  },
+  {
+    "id": "sunsaver_models_keep_display_format",
+    "question": "What SunSaver models are available?",
+    "expected_source": "operation-manual-.pdf",
+    "expected_facts": ["SS-6-12V", "SS-10L-24V", "SS-20L-24V"],
+    "forbidden_facts": ["SS1012V", "SS20L24V"],
+    "forbidden_sources": ["manual (1).pdf", "datasheet-.pdf"]
+  },
+  {
+    "id": "sunsaver_followup_system_voltages",
+    "question": "What system voltages are supported?",
+    "history": [
+      "user: What are Morningstar SunSaver PV system solar controllers?",
+      "assistant: SunSaver is a family of PWM solar charge controllers."
+    ],
+    "expected_source": "operation-manual-.pdf",
+    "expected_facts": ["12V", "24V"],
+    "forbidden_facts": ["115V", "220V", "SI300"],
+    "forbidden_sources": ["manual (1).pdf", "datasheet-.pdf"]
+  },
+  {
+    "id": "sunsaver_followup_self_consumption",
+    "question": "What is the controller self-consumption?",
+    "history": [
+      "user: What are Morningstar SunSaver PV system solar controllers?",
+      "assistant: SunSaver is a family of PWM solar charge controllers."
+    ],
+    "expected_source": "operation-manual-.pdf",
+    "expected_facts": ["<8mA"],
+    "forbidden_facts": ["25mA", "450mA"],
+    "forbidden_sources": ["manual (1).pdf", "datasheet-.pdf"]
+  },
+  {
+    "id": "sunsaver_followup_lvd",
+    "question": "What is the purpose of low-voltage load disconnect on L models?",
+    "history": [
+      "user: What are Morningstar SunSaver PV system solar controllers?",
+      "assistant: SunSaver is a family of PWM solar charge controllers."
+    ],
+    "expected_source": "operation-manual-.pdf",
+    "expected_facts": ["protect", "battery", "discharge"],
+    "forbidden_facts": [],
+    "forbidden_sources": ["manual (1).pdf", "datasheet-.pdf"]
   }
 ]

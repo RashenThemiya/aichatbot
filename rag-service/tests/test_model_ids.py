@@ -62,6 +62,15 @@ class ModelIdTests(unittest.TestCase):
             {"SI300115VUL", "SI300220V"},
         )
 
+    def test_manual_metadata_and_threshold_codes_are_not_models(self):
+        self.assertEqual(
+            extract_model_ids(
+                "NFPA70, ETL24ATEX0421X, MS003243EN, FEB15, AGM12, "
+                "EARTH12V, and LVD11"
+            ),
+            set(),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -16,6 +16,7 @@ from app.models.schemas import (
 from app.services.chroma_store import ChromaStore
 from app.services.model_ids import extract_model_ids
 from app.services.pdf_processor import chunk_pages, extract_pages_from_pdf
+from app.services.product_names import extract_product_names
 
 SYSTEM_PROMPT = """You are a customer support and product recommendation assistant. Answer using the provided context from company documents.
 
@@ -24,6 +25,7 @@ Rules:
 - Do not invent facts that aren't supported by the context, but do paraphrase and combine information across the given sources to answer fully.
 - Cite supporting sources inline using their labels, for example [Source 1]. Never cite a source that does not support the statement.
 - A product or service claim must be supported by a context block about that same named product or service. Never use one product's document as support for a different product.
+- When asked which models are available, list only identifiers explicitly presented as models in the source. Preserve their exact letters, digits, hyphens, slashes, and suffixes; never replace model IDs with voltage categories.
 - Return only a customer-facing answer. Never mention the draft, supplied context, verification, unsupported claims, or text that should be removed.
 - When the context does not support an answer, ask one concise clarification question. Do not claim that the customer must contact support.
 - Do NOT handle orders, bookings, payments, or transactions. If asked, politely explain you can only help with support questions from the knowledge base.
@@ -390,7 +392,7 @@ class RAGEngine:
         """Return true only when the question omits the subject or uses a reference."""
         text = " ".join(str(question or "").split()).strip()
         normalized = text.casefold().strip(" .?!")
-        if not normalized or extract_model_ids(text):
+        if not normalized or extract_model_ids(text) or extract_product_names(text):
             return False
 
         if re.search(
@@ -415,11 +417,29 @@ class RAGEngine:
         ):
             return False
 
-        # These forms ask for an attribute but contain no product subject.
+        # These forms ask for an attribute but contain no named product subject.
+        # Word order varies naturally ("supported system voltages" and "system
+        # voltages are supported"), so do not rely only on a prefix match.
+        if re.search(
+            r"\bself[- ]?consumption\b|"
+            r"^what\s+(?:(?:is|are)\s+)?(?:the\s+)?(?:purpose|safety\s+rule|"
+            r"function|benefit)\b|"
+            r"\bon\s+(?:[a-z0-9-]+\s+)?models?\b|"
+            r"\b(?:system\s+)?(?:voltage|current|power|frequency|capacity|rating)s?\b.*"
+            r"\b(?:available|supported|required|provided|included|allowed)\b|"
+            r"\b(?:available|supported|required|provided|included|allowed)\b.*"
+            r"\b(?:model|version|voltage|current|power|frequency|capacity|rating)s?\b|"
+            r"\b(?:controller|inverter|charger|unit|product|model)(?:'s)?\s+"
+            r"(?:self[- ]?consumption|voltage|current|power|rating|dimensions?|"
+            r"weight|frequency|warranty|ports?|fuse|error)\b",
+            normalized,
+        ):
+            return True
+
         return bool(re.match(
             r"^(?:what|which)\s+(?:(?:is|are|was|were)\s+)?(?:the\s+)?"
             r"(?:continuous|peak|rated|maximum|minimum|available|supported|"
-            r"ac|dc|input|output|power|voltage|current|rating|versions?|"
+            r"ac|dc|input|output|power|voltage|current|rating|versions?|models?|"
             r"dimensions?|weight|frequency|warranty|ports?|fuse|error)\b|"
             r"^how\s+(?:much|many|long|wide|high|fast|heavy)\b|"
             r"^(?:does|do|can|could|is|are|will|would|has|have)\s+(?:the\s+)?"
@@ -627,7 +647,6 @@ class RAGEngine:
         effective_date: str = "",
         is_active: bool = True,
     ) -> int:
-        self.store.delete_document(company_id, document_id)
         pages = extract_pages_from_pdf(file_path)
         chunks = chunk_pages(pages)
         return self.store.add_document_chunks(
@@ -649,6 +668,7 @@ class RAGEngine:
         question: str,
         top_k: int | None = None,
         history: list[str] | None = None,
+        preferred_document_ids: list[str] | None = None,
     ) -> QueryResponse:
         query_started = perf_counter()
         timings: dict[str, int] = {}
@@ -703,10 +723,31 @@ class RAGEngine:
         required_model_ids = explicit_model_ids or extract_model_ids(
             base_standalone_question
         )
+        explicit_product_names = extract_product_names(question)
+        required_product_names = explicit_product_names or extract_product_names(
+            base_standalone_question
+        )
+        if not required_product_names and scoped_history:
+            required_product_names = extract_product_names("\n".join(scoped_history))
+        allowed_document_ids = (
+            {
+                str(document_id).strip()
+                for document_id in (preferred_document_ids or [])
+                if str(document_id).strip()
+            }
+            if scoped_history and not explicit_model_ids and not explicit_product_names
+            else set()
+        )
         retrieval_stats["model_filter_applied"] = bool(required_model_ids)
         retrieval_stats["required_model_ids"] = ", ".join(
             sorted(required_model_ids)
         )
+        retrieval_stats["product_filter_applied"] = bool(required_product_names)
+        retrieval_stats["required_product_names"] = ", ".join(
+            sorted(required_product_names)
+        )
+        retrieval_stats["document_scope_applied"] = bool(allowed_document_ids)
+        retrieval_stats["allowed_document_count"] = len(allowed_document_ids)
 
         started = perf_counter()
         preliminary_candidates = self.store.hybrid_query(
@@ -714,6 +755,8 @@ class RAGEngine:
             base_standalone_question,
             min(max(k, 8), 12),
             required_model_ids=required_model_ids,
+            required_product_names=required_product_names,
+            allowed_document_ids=allowed_document_ids,
         )
         mark("catalog_retrieval", started)
 
@@ -832,6 +875,10 @@ class RAGEngine:
         queries = []
         for variant in self._multilingual_variants(standalone_question):
             queries.extend(self._expand_query(variant))
+        if self._is_model_list_question(standalone_question):
+            queries.append(
+                f"{standalone_question} models included in this manual exact model identifiers"
+            )
         queries = list(dict.fromkeys(queries))
         mark("query_expansion", started)
         retrieval_stats["query_count"] = len(queries)
@@ -849,12 +896,23 @@ class RAGEngine:
                 q,
                 per_query_k,
                 required_model_ids=required_model_ids,
+                required_product_names=required_product_names,
+                allowed_document_ids=allowed_document_ids,
             ):
                 key = (chunk["document_id"], chunk.get("page_number"), chunk["content"][:80])
                 if key not in seen or chunk["rank_score"] > seen[key]["rank_score"]:
                     seen[key] = chunk
         mark("retrieval", started)
         retrieval_stats["candidate_count"] = len(seen)
+
+        if self._is_model_list_question(standalone_question):
+            for chunk in seen.values():
+                content = chunk.get("content", "")
+                explicit_ids = extract_model_ids(content)
+                if re.search(r"\bmodels?\s+(?:included|available|offered)\b", content, re.I):
+                    chunk["rank_score"] += 0.08
+                elif len(explicit_ids) >= 3:
+                    chunk["rank_score"] += 0.04
 
         candidates = sorted(
             seen.values(), key=lambda c: c["rank_score"], reverse=True
@@ -864,6 +922,13 @@ class RAGEngine:
                 chunk for chunk in candidates
                 if set(chunk.get("model_ids", [])) & required_model_ids
             ]
+        if not self._is_visual_evidence_question(standalone_question):
+            reliable_candidates = [
+                chunk for chunk in candidates
+                if chunk.get("evidence_type", "text") != "vision"
+            ]
+            if reliable_candidates:
+                candidates = reliable_candidates
         started = perf_counter()
         retrieved = self._rerank(standalone_question, candidates, k)
         mark("rerank", started)
@@ -872,12 +937,17 @@ class RAGEngine:
             if chunk["score"] >= settings.minimum_relevance_score
         ]
         retrieval_stats["retrieved_count"] = len(retrieved)
+        retrieval_stats["retrieved_locations"] = "; ".join(
+            f"{chunk.get('document_name', '')}:p{chunk.get('page_number', '?')}"
+            for chunk in retrieved
+        )[:1000]
         started = perf_counter()
         retrieved = self.store.expand_neighbors(
             company_id,
             retrieved,
             settings.neighbor_chunks,
             required_model_ids=required_model_ids,
+            allowed_document_ids=allowed_document_ids,
         )
         mark("neighbor_expansion", started)
         
@@ -958,6 +1028,37 @@ class RAGEngine:
             allow_clarification=not clarification_exhausted,
         )
         answer = self._remove_verifier_commentary(answer)
+        unsupported_model_ids = self._unsupported_model_ids(answer, retrieved)
+        retrieval_stats["model_id_repair_attempted"] = False
+        retrieval_stats["initial_unsupported_model_id_count"] = len(
+            unsupported_model_ids
+        )
+        if unsupported_model_ids:
+            retrieval_stats["model_id_repair_attempted"] = True
+            answer = self._repair_model_id_answer(
+                standalone_question,
+                context,
+                answer,
+                unsupported_model_ids,
+            )
+            answer = self._remove_verifier_commentary(answer)
+            unsupported_model_ids = self._unsupported_model_ids(answer, retrieved)
+        retrieval_stats["unsupported_model_id_count"] = len(unsupported_model_ids)
+        if unsupported_model_ids:
+            timings["total"] = int((perf_counter() - query_started) * 1000)
+            return QueryResponse(
+                answer=(
+                    "I found the relevant product family, but I couldn't confirm the "
+                    "exact model identifiers reliably. Please check the model list in "
+                    "the product manual."
+                ),
+                sources=[],
+                suggestions=[],
+                diagnostics=QueryDiagnostics(
+                    timings_ms=timings,
+                    retrieval=retrieval_stats,
+                ),
+            )
         unsupported_numeric_claims = (
             self._unsupported_numeric_claims(answer, retrieved)
             if settings.enable_numeric_verification
@@ -1023,6 +1124,7 @@ class RAGEngine:
             chunk for index, chunk in enumerate(retrieved, 1)
             if index in cited_indices
         ]
+        cited_retrieved = self._deduplicate_source_documents(cited_retrieved)
         sources = [
             SourceChunk(
                 document_id=c["document_id"],
@@ -1046,6 +1148,40 @@ class RAGEngine:
         )
 
     @staticmethod
+    def _is_visual_evidence_question(question: str) -> bool:
+        normalized = " ".join(str(question or "").casefold().split())
+        return bool(re.search(
+            r"\b(?:diagram|drawing|illustration|image|picture|mounting|mount|"
+            r"hole|holes|flange|tab|layout|position|located|location|"
+            r"wiring|connector|terminal)\b",
+            normalized,
+        ))
+
+    @staticmethod
+    def _is_model_list_question(question: str) -> bool:
+        normalized = " ".join(str(question or "").casefold().split())
+        return bool(
+            re.search(r"\bmodels?\b", normalized)
+            and re.search(
+                r"\b(?:available|included|offered|list|which|what)\b",
+                normalized,
+            )
+        )
+
+    @staticmethod
+    def _deduplicate_source_documents(chunks: list[dict]) -> list[dict]:
+        """Show each cited PDF once while keeping its highest-ranked citation."""
+        unique = []
+        seen = set()
+        for chunk in chunks:
+            key = chunk.get("document_id") or chunk.get("document_name")
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            unique.append(chunk)
+        return unique
+
+    @staticmethod
     def _is_unsupported_answer(answer: str) -> bool:
         normalized = " ".join(answer.lower().split())
         unsupported_phrases = (
@@ -1061,6 +1197,15 @@ class RAGEngine:
     def _numeric_claims(text: str) -> set[tuple[str, str, str]]:
         """Extract exact technical values while ignoring citation/model numbers."""
         cleaned = re.sub(r"\[Source\s+\d+\]", "", text, flags=re.I)
+        # A suffix such as 12V inside SS-6-12V identifies the model; it is not a
+        # claim that the system voltage is 12 V. Remove hyphenated model tokens
+        # before parsing technical numeric values.
+        cleaned = re.sub(
+            r"(?<![A-Za-z0-9])[A-Za-z][A-Za-z0-9]*"
+            r"(?:-[A-Za-z0-9]+){2,}(?![A-Za-z0-9])",
+            " ",
+            cleaned,
+        )
         number_words = {
             "one": "1", "two": "2", "three": "3", "four": "4", "five": "5",
             "six": "6", "seven": "7", "eight": "8", "nine": "9", "ten": "10",
@@ -1160,6 +1305,59 @@ class RAGEngine:
         )
         source_claims = cls._numeric_claims(supporting_text)
         return sorted(claims - source_claims)
+
+    @staticmethod
+    def _unsupported_model_ids(answer: str, retrieved: list[dict]) -> list[str]:
+        model_ids = extract_model_ids(answer)
+        if not model_ids:
+            return []
+        cited = {
+            int(value)
+            for value in re.findall(r"\[Source\s+(\d+)\]", answer, flags=re.I)
+            if 1 <= int(value) <= len(retrieved)
+        }
+        if not cited:
+            return sorted(model_ids)
+        supporting_text = "\n".join(
+            retrieved[index - 1].get(
+                "context_content",
+                retrieved[index - 1].get("content", ""),
+            )
+            for index in sorted(cited)
+        )
+        return sorted(model_ids - extract_model_ids(supporting_text))
+
+    def _repair_model_id_answer(
+        self,
+        question: str,
+        context: str,
+        answer: str,
+        unsupported_model_ids: list[str],
+    ) -> str:
+        """Remove or correct invented model identifiers using exact source text."""
+        try:
+            response = self.openai.chat.completions.create(
+                model=settings.openai_chat_model,
+                messages=[{
+                    "role": "user",
+                    "content": (
+                        "Repair this answer using only the supplied source context. The "
+                        "following normalized model identifiers are not supported by their "
+                        f"citations: {', '.join(unsupported_model_ids)}. Remove invented IDs "
+                        "and, when the context contains an explicit model list, copy every "
+                        "relevant model identifier exactly as printed, preserving hyphens and "
+                        "suffixes. Never turn voltage categories into model names. Cite the "
+                        "source that contains the list and return only the repaired answer.\n\n"
+                        f"Question:\n{question}\n\nSource context:\n{context}\n\n"
+                        f"Answer to repair:\n{answer}"
+                    ),
+                }],
+                temperature=0,
+            )
+            repaired = (response.choices[0].message.content or "").strip()
+            return repaired or answer
+        except Exception:
+            return answer
 
     def _repair_numeric_answer(
         self,
@@ -1311,6 +1509,7 @@ class RAGEngine:
         try:
             listing = "\n\n".join(
                 f"[{i}] Document: {item.get('document_name', 'Unknown')}\n"
+                f"Evidence type: {item.get('evidence_type', 'text')}\n"
                 f"{item['content'][:1200]}"
                 for i, item in enumerate(candidates)
             )
@@ -1321,6 +1520,11 @@ class RAGEngine:
                     "content": (
                         "Select only context chunks that directly help answer the question. "
                         "Reject chunks from unrelated subjects even if they share generic words. "
+                        "Prefer native PDF text over OCR or vision extraction when both answer "
+                        "the same factual specification. Use vision evidence for questions that "
+                        "depend on a diagram, layout, or image. "
+                        "For a request to list models, prioritize a chunk that explicitly says "
+                        "models are included or available and preserves their exact model IDs. "
                         "For product or service recommendations, retain only chunks that describe "
                         "a candidate matching an explicit customer requirement. Return [] when no "
                         "chunk is directly relevant. "

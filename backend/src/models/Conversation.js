@@ -19,6 +19,7 @@ const messageSchema = new mongoose.Schema(
           content: String,
           score: Number,
           pageNumber: Number,
+          sectionHeading: String,
         },
       ],
       default: [],

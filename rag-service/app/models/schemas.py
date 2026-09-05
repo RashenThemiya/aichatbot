@@ -27,6 +27,7 @@ class QueryRequest(BaseModel):
     question: str
     top_k: int | None = None
     history: list[str] = Field(default_factory=list)
+    preferred_document_ids: list[str] = Field(default_factory=list)
 
 
 class SourceChunk(BaseModel):

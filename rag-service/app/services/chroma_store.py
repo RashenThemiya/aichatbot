@@ -16,6 +16,12 @@ from app.services.model_ids import (
     matches_model_ids,
     serialize_model_ids,
 )
+from app.services.product_names import (
+    extract_product_names,
+    item_product_names,
+    matches_product_names,
+    serialize_product_names,
+)
 
 
 class ChromaStore:
@@ -68,22 +74,37 @@ class ChromaStore:
         collection = self._get_collection(company_id)
         raw_contents = [chunk.content for chunk in chunks]
         name_model_ids = extract_model_ids(document_name)
-        document_model_ids = name_model_ids or extract_model_ids(
-            " ".join(raw_contents)
+        document_product_names = extract_product_names(
+            f"{document_name}\n{' '.join(raw_contents)}"
         )
-        contents = []
+        embedding_contents = []
         for chunk in chunks:
-            local_model_ids = name_model_ids or extract_model_ids(chunk.content) or document_model_ids
+            local_model_ids = name_model_ids or extract_model_ids(
+                f"{getattr(chunk, 'section_heading', '')}\n{chunk.content}"
+            )
+            local_product_names = extract_product_names(chunk.content)
+            if len(document_product_names) == 1:
+                local_product_names = document_product_names
             labels = [f"Document: {document_name}"]
             if local_model_ids:
                 labels.append(f"Product model: {', '.join(sorted(local_model_ids))}")
+            if local_product_names:
+                labels.append(f"Product family: {', '.join(sorted(local_product_names))}")
             section_heading = getattr(chunk, "section_heading", "")
             if section_heading:
                 labels.append(f"Section: {section_heading}")
-            contents.append("\n".join(labels) + f"\n\n{chunk.content}")
-        embeddings = self._embed(contents)
+            embedding_contents.append("\n".join(labels) + f"\n\n{chunk.content}")
+        # Enrich only the embedding input. The text supplied to the answer model
+        # remains the PDF's original display text, so normalized IDs never leak
+        # into customer-facing model lists.
+        embeddings = self._embed(embedding_contents)
 
         ids = [f"{document_id}_chunk_{i}" for i in range(len(chunks))]
+        existing = collection.get(
+            where={"document_id": document_id},
+            include=[],
+        )
+        stale_ids = sorted(set(existing.get("ids", [])) - set(ids))
         metadatas = [
             {
                 "company_id": company_id,
@@ -95,13 +116,20 @@ class ChromaStore:
                 "document_version": document_version,
                 "effective_date": effective_date,
                 "is_active": is_active,
-                # A model-bearing filename defines document ownership. For a
-                # generic multi-model manual, use local IDs and inherit the full
-                # document set only when a chunk has no model heading.
                 "model_ids": serialize_model_ids(
                     name_model_ids
-                    or extract_model_ids(chunk.content)
-                    or document_model_ids
+                    or extract_model_ids(
+                        f"{getattr(chunk, 'section_heading', '')}\n{chunk.content}"
+                    )
+                ),
+                "product_names": serialize_product_names(
+                    document_product_names
+                    if len(document_product_names) == 1
+                    else extract_product_names(chunk.content)
+                ),
+                "evidence_type": getattr(chunk, "evidence_type", "text"),
+                "evidence_confidence": float(
+                    getattr(chunk, "evidence_confidence", 1.0)
                 ),
             }
             for i, chunk in enumerate(chunks)
@@ -117,10 +145,28 @@ class ChromaStore:
             collection.upsert(
                 ids=ids[start:end],
                 embeddings=embeddings[start:end],
-                documents=contents[start:end],
+                documents=raw_contents[start:end],
                 metadatas=metadatas[start:end],
             )
+        if stale_ids:
+            collection.delete(ids=stale_ids)
         return len(chunks)
+
+    @staticmethod
+    def _display_content(document: str) -> str:
+        """Remove legacy embedding-only labels from stored answer context."""
+        value = str(document or "")
+        header, separator, body = value.partition("\n\n")
+        lines = [line.strip() for line in header.splitlines() if line.strip()]
+        allowed_labels = ("Document:", "Product model:", "Product family:", "Section:")
+        if (
+            separator
+            and lines
+            and lines[0].startswith("Document:")
+            and all(line.startswith(allowed_labels) for line in lines)
+        ):
+            return body.strip()
+        return value
 
     def delete_document(self, company_id: str, document_id: str) -> None:
         collection = self._get_collection(company_id)
@@ -153,6 +199,8 @@ class ChromaStore:
         question: str,
         top_k: int,
         required_model_ids: set[str] | None = None,
+        required_product_names: set[str] | None = None,
+        allowed_document_ids: set[str] | None = None,
     ) -> list[dict]:
         collection = self._get_collection(company_id)
         count = collection.count()
@@ -160,29 +208,44 @@ class ChromaStore:
             return []
 
         required = required_model_ids or set()
+        required_products = required_product_names or set()
+        allowed_documents = allowed_document_ids or set()
         where = {"is_active": True}
         eligible_count = count
-        if required:
+        if required or required_products or allowed_documents:
             all_items = collection.get(include=["documents", "metadatas"])
-            eligible_document_ids = sorted({
-                meta.get("document_id", "")
+            pairs = [
+                (doc, meta)
                 for doc, meta in zip(
                     all_items.get("documents", []),
                     all_items.get("metadatas", []),
                 )
-                if meta.get("document_id")
-                and meta.get("is_active", True)
-                and matches_model_ids(doc, meta, required)
-            })
+                if meta.get("document_id") and meta.get("is_active", True)
+            ]
+            eligible_document_ids = {
+                meta.get("document_id", "") for _doc, meta in pairs
+            }
+            if allowed_documents:
+                eligible_document_ids &= allowed_documents
+            if required_products:
+                eligible_document_ids &= {
+                    meta.get("document_id", "")
+                    for doc, meta in pairs
+                    if matches_product_names(doc, meta, required_products)
+                }
+            if required:
+                eligible_document_ids &= {
+                    meta.get("document_id", "")
+                    for doc, meta in pairs
+                    if matches_model_ids(doc, meta, required)
+                }
+            eligible_document_ids = sorted(eligible_document_ids)
             if not eligible_document_ids:
                 return []
             eligible_count = sum(
                 1
-                for doc, meta in zip(
-                    all_items.get("documents", []),
-                    all_items.get("metadatas", []),
-                )
-                if meta.get("is_active", True)
+                for doc, meta in pairs
+                if meta.get("document_id", "") in eligible_document_ids
                 and matches_model_ids(doc, meta, required)
             )
             document_filter = (
@@ -222,7 +285,10 @@ class ChromaStore:
                     "effective_date": meta.get("effective_date", ""),
                     "is_active": meta.get("is_active", True),
                     "model_ids": sorted(item_model_ids(doc, meta)),
-                    "content": doc,
+                    "product_names": sorted(item_product_names(doc, meta)),
+                    "evidence_type": meta.get("evidence_type", "text"),
+                    "evidence_confidence": float(meta.get("evidence_confidence", 1.0)),
+                    "content": self._display_content(doc),
                     "score": round(score, 4),
                 }
             )
@@ -251,6 +317,8 @@ class ChromaStore:
         question: str,
         top_k: int,
         required_model_ids: set[str] | None = None,
+        required_product_names: set[str] | None = None,
+        allowed_document_ids: set[str] | None = None,
     ) -> list[dict]:
         """Combine semantic retrieval with exact-term matching."""
         collection = self._get_collection(company_id)
@@ -259,22 +327,35 @@ class ChromaStore:
             return []
 
         required = required_model_ids or set()
+        required_products = required_product_names or set()
+        allowed_documents = allowed_document_ids or set()
         semantic = self.query(
             company_id,
             question,
             min(top_k, count),
             required_model_ids=required,
+            required_product_names=required_products,
+            allowed_document_ids=allowed_documents,
         )
         all_items = collection.get(include=["documents", "metadatas"])
+        product_document_ids = {
+            meta.get("document_id", "")
+            for doc, meta in zip(all_items["documents"], all_items["metadatas"])
+            if meta.get("is_active", True)
+            and matches_product_names(doc, meta, required_products)
+        }
         eligible = [
             (doc, meta)
             for doc, meta in zip(all_items["documents"], all_items["metadatas"])
             if meta.get("is_active", True)
             and matches_model_ids(doc, meta, required)
+            and (not allowed_documents or meta.get("document_id", "") in allowed_documents)
+            and (not required_products or meta.get("document_id", "") in product_document_ids)
         ]
         if not eligible:
             return []
-        documents = [doc for doc, _meta in eligible]
+        raw_documents = [doc for doc, _meta in eligible]
+        documents = [self._display_content(doc) for doc in raw_documents]
         metadatas = [meta for _doc, meta in eligible]
 
         tokenized = [self._tokens(doc) for doc in documents]
@@ -334,7 +415,10 @@ class ChromaStore:
                     "document_version": meta.get("document_version", "1"),
                     "effective_date": meta.get("effective_date", ""),
                     "is_active": meta.get("is_active", True),
-                    "model_ids": sorted(item_model_ids(doc, meta)),
+                    "model_ids": sorted(item_model_ids(raw_documents[index], meta)),
+                    "product_names": sorted(item_product_names(raw_documents[index], meta)),
+                    "evidence_type": meta.get("evidence_type", "text"),
+                    "evidence_confidence": float(meta.get("evidence_confidence", 1.0)),
                     "content": doc,
                     "score": min(0.7, raw_score / (raw_score + 1.0)),
                     "rank_score": 0.0,
@@ -353,6 +437,10 @@ class ChromaStore:
                 item.get("document_name", "")
             ):
                 item["rank_score"] += 0.005
+            item["rank_score"] *= max(
+                0.0,
+                min(1.0, float(item.get("evidence_confidence", 1.0))),
+            )
 
         return sorted(
             fused.values(),
@@ -366,6 +454,7 @@ class ChromaStore:
         chunks: list[dict],
         radius: int,
         required_model_ids: set[str] | None = None,
+        allowed_document_ids: set[str] | None = None,
     ) -> list[dict]:
         """Attach adjacent chunks from the same document as parent context."""
         if radius <= 0:
@@ -375,6 +464,8 @@ class ChromaStore:
         cache = {}
         for chunk in chunks:
             document_id = chunk["document_id"]
+            if allowed_document_ids and document_id not in allowed_document_ids:
+                continue
             if document_id not in cache:
                 data = collection.get(
                     where={"document_id": document_id},
@@ -390,7 +481,7 @@ class ChromaStore:
             matching_index = next(
                 (
                     index for index, (doc, _meta) in document_chunks.items()
-                    if doc == chunk["content"]
+                    if self._display_content(doc) == chunk["content"]
                 ),
                 None,
             )
@@ -398,6 +489,7 @@ class ChromaStore:
                 expanded.append(chunk)
                 continue
             neighbors = []
+            root_evidence_type = chunk.get("evidence_type", "text")
             for index in range(
                 matching_index - radius,
                 matching_index + radius + 1,
@@ -410,8 +502,14 @@ class ChromaStore:
                         required_model_ids or set(),
                     ):
                         continue
+                    if (
+                        root_evidence_type != "vision"
+                        and meta.get("evidence_type", "text") == "vision"
+                    ):
+                        continue
                     neighbors.append(
-                        f"[Page {meta.get('page_number', '?')}]\n{doc}"
+                        f"[Page {meta.get('page_number', '?')}]\n"
+                        f"{self._display_content(doc)}"
                     )
             enriched = dict(chunk)
             enriched["context_content"] = "\n\n".join(neighbors)

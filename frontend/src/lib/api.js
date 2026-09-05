@@ -34,7 +34,11 @@ async function request(path, options = {}) {
   });
 
   if (!response.ok) {
-    const message = typeof data === "string" ? data : data.error || data.detail || "Request failed";
+    const message = typeof data === "string"
+      ? data
+      : data.detail && data.error && data.detail !== data.error
+        ? `${data.error}: ${data.detail}`
+        : data.detail || data.error || "Request failed";
     const error = new Error(message);
     error.status = response.status;
     error.data = data;
@@ -178,6 +182,10 @@ export const api = {
     },
     reindex: (companyId, documentId) =>
       request(`/api/companies/${companyId}/documents/${documentId}/reindex`, {
+        method: "POST",
+      }),
+    reindexAll: (companyId) =>
+      request(`/api/companies/${companyId}/documents/reindex-all`, {
         method: "POST",
       }),
     setActive: (companyId, documentId, isActive) =>

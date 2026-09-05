@@ -159,13 +159,15 @@ export default function App() {
   const [smsValidation, setSmsValidation] = useState(null);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
-  const [uploadProgress, setUploadProgress] = useState(null);
+    const [uploadProgress, setUploadProgress] = useState(null);
+    const [reindexProgress, setReindexProgress] = useState(null);
   const [loading, setLoading] = useState({
     health: false,
     companies: false,
     documents: false,
     download: false,
-    upload: false,
+      upload: false,
+      reindexAll: false,
     chat: false,
     widgetTest: false,
     whatsapp: false,
@@ -1211,6 +1213,68 @@ ${widgetScriptSrc()}`;
       document.isActive ? "Document deactivated" : "Document activated"
     );
     if (result) await loadDocuments();
+  }
+
+  async function handleReindexAllDocuments() {
+    if (!selectedCompany || documents.length === 0) return;
+    const ok = window.confirm(
+      `Reindex all ${documents.length} uploaded PDFs for ${selectedCompany.name}? They will be processed one by one and this may take several minutes.`
+    );
+    if (!ok) return;
+
+    const result = await runTask(
+      "reindexAll",
+      async () => {
+        const results = [];
+        for (const [index, document] of documents.entries()) {
+          setReindexProgress({
+            current: index + 1,
+            total: documents.length,
+            fileName: document.originalName,
+          });
+          try {
+            const updated = await api.documents.reindex(selectedCompany._id, document._id);
+            results.push({
+              documentId: document._id,
+              documentName: document.originalName,
+              status: "indexed",
+              chunksIndexed: updated.chunksIndexed || 0,
+              error: "",
+            });
+          } catch (err) {
+            results.push({
+              documentId: document._id,
+              documentName: document.originalName,
+              status: err.status === 409 && err.data?.duplicate ? "skipped" : "failed",
+              chunksIndexed: 0,
+              error: err.data?.detail || err.message || "Reindex failed",
+            });
+          }
+        }
+        return {
+          indexedCount: results.filter((item) => item.status === "indexed").length,
+          skippedCount: results.filter((item) => item.status === "skipped").length,
+          failedCount: results.filter((item) => item.status === "failed").length,
+          results,
+        };
+      }
+    );
+    setReindexProgress(null);
+    if (!result) return;
+
+    const summary = [
+      `${result.indexedCount} reindexed`,
+      result.skippedCount ? `${result.skippedCount} duplicates skipped` : "",
+    ].filter(Boolean).join(", ");
+    setNotice(summary || "Reindex completed");
+    if (result.failedCount) {
+      const failed = result.results
+        .filter((item) => item.status === "failed")
+        .map((item) => `${item.documentName}: ${item.error}`)
+        .join("; ");
+      setError(`${result.failedCount} document${result.failedCount === 1 ? "" : "s"} failed. ${failed}`);
+    }
+    await loadDocuments();
   }
 
   function handleNewChatSession() {
@@ -2476,7 +2540,20 @@ ${widgetScriptSrc()}`;
                       <FileText size={18} />
                       <h2 className="font-semibold text-slate-950">Documents</h2>
                     </div>
-                    <div className="flex gap-2">
+                    <div className="flex flex-wrap gap-2">
+                      {documents.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={handleReindexAllDocuments}
+                          disabled={loading.reindexAll || loading.documents}
+                          className="inline-flex items-center justify-center gap-2 px-3 text-sm font-semibold transition bg-white border rounded shadow-sm h-9 border-slate-200 text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {loading.reindexAll
+                            ? <Loader2 className="animate-spin" size={16} />
+                            : <RefreshCcw size={16} />}
+                          {loading.reindexAll ? "Reindexing one by one..." : `Reindex all (${documents.length})`}
+                        </button>
+                      )}
                       {documents.length > 0 && (
                         <button
                           type="button"
@@ -2558,6 +2635,25 @@ ${widgetScriptSrc()}`;
                       </label>
                     </div>
                   </div>
+                  {reindexProgress && (
+                    <div className="px-4 py-3 border-b border-slate-200 bg-slate-50" role="status" aria-live="polite">
+                      <div className="flex items-center justify-between gap-4 text-sm">
+                        <div className="flex min-w-0 items-center gap-2 font-medium text-slate-700">
+                          <Loader2 className="shrink-0 animate-spin" size={16} />
+                          <span className="truncate">Reindexing {reindexProgress.fileName}</span>
+                        </div>
+                        <span className="shrink-0 text-slate-500">
+                          {reindexProgress.current} of {reindexProgress.total}
+                        </span>
+                      </div>
+                      <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-200">
+                        <div
+                          className="h-full rounded-full bg-slate-900 transition-all duration-300"
+                          style={{ width: `${(reindexProgress.current / reindexProgress.total) * 100}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
                   {uploadProgress && (
                     <div className="px-4 py-3 border-b border-slate-200 bg-slate-50" role="status" aria-live="polite">
                       <div className="flex items-center justify-between gap-4 text-sm">

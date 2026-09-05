@@ -27,15 +27,37 @@ function normalizeQuestion(question) {
   return String(question || "").trim().toLowerCase().replace(/\s+/g, " ");
 }
 
-function buildQueryCacheKey({ companyId, question, topK, history }) {
+function buildQueryCacheKey({ companyId, question, topK, history, preferredDocumentIds }) {
   const historyText = (history || []).slice(-16).join("\n").toLowerCase();
   const historyKey = crypto.createHash("sha256").update(historyText).digest("hex");
   return JSON.stringify({
+    version: process.env.RAG_QUERY_CACHE_VERSION || "product-document-scope-v1",
     companyId,
     question: normalizeQuestion(question),
     topK: topK || null,
     history: historyKey,
+    preferredDocumentIds: [...new Set(preferredDocumentIds || [])].sort(),
   });
+}
+
+function buildConversationRagContext(messages = []) {
+  const recent = messages.slice(-16);
+  const history = recent.map((item) => `${item.role}: ${item.content}`);
+  let preferredDocumentIds = [];
+
+  // Use the closest earlier answer that actually cited documents. The RAG
+  // service applies this scope only to an incomplete/generic follow-up, so a
+  // newly named product can still start a clean topic.
+  for (let index = recent.length - 1; index >= 0; index -= 1) {
+    const message = recent[index];
+    if (message.role !== "assistant" || !message.sources?.length) continue;
+    preferredDocumentIds = [...new Set(
+      message.sources.map((source) => String(source.documentId || "").trim()).filter(Boolean)
+    )];
+    break;
+  }
+
+  return { history, preferredDocumentIds };
 }
 
 function rememberQuery(cacheKey, data, companyId) {
@@ -116,8 +138,14 @@ async function setDocumentActive({ companyId, documentId, isActive }) {
   return data;
 }
 
-async function queryKnowledge({ companyId, question, topK, history }) {
-  const cacheKey = buildQueryCacheKey({ companyId, question, topK, history });
+async function queryKnowledge({ companyId, question, topK, history, preferredDocumentIds }) {
+  const cacheKey = buildQueryCacheKey({
+    companyId,
+    question,
+    topK,
+    history,
+    preferredDocumentIds,
+  });
   const cached = queryCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
     return {
@@ -134,6 +162,7 @@ async function queryKnowledge({ companyId, question, topK, history }) {
     question,
     top_k: topK,
     history: history || [],
+    preferred_document_ids: preferredDocumentIds || [],
   });
 
   rememberQuery(cacheKey, data, companyId);
@@ -151,6 +180,7 @@ module.exports = {
   deleteDocumentVectors,
   setDocumentActive,
   queryKnowledge,
+  buildConversationRagContext,
   checkHealth,
   invalidateCompanyCache,
 };

@@ -32,6 +32,8 @@ class PdfChunk:
     content: str
     page_number: int
     section_heading: str = ""
+    evidence_type: str = "text"
+    evidence_confidence: float = 1.0
 
 
 def _table_to_markdown(table: list[list[str | None]]) -> str:
@@ -71,6 +73,47 @@ def _table_to_markdown(table: list[list[str | None]]) -> str:
         f"\n\nTable search text:\n{search_text}" if search_text else ""
     )
 
+def _is_usable_table(rows: tuple[tuple[str, ...], ...], *, borderless: bool) -> bool:
+    """Reject page-column/prose layouts that pdfplumber mistakes for tables."""
+    if len(rows) < 2:
+        return False
+    column_count = max((len(row) for row in rows), default=0)
+    if column_count < 2:
+        return False
+
+    populated_counts = [sum(bool(cell) for cell in row) for row in rows]
+    structured_rows = sum(count >= 2 for count in populated_counts)
+    if structured_rows < 2 or structured_rows / len(rows) < 0.6:
+        return False
+
+    populated_cells = [cell for row in rows for cell in row if cell]
+    if not populated_cells:
+        return False
+    long_cells = [cell for cell in populated_cells if len(cell) > 180]
+    if long_cells and (
+        len(long_cells) / len(populated_cells) > 0.2
+        or sum(len(cell) for cell in populated_cells) / len(populated_cells) > 100
+    ):
+        return False
+
+    # Borderless extraction is the most likely to interpret two text columns as
+    # a table. Require either several compact rows or obvious specification data.
+    if borderless:
+        if column_count > 8:
+            return False
+        header_tokens = re.findall(r"[A-Za-z0-9]+", " ".join(rows[0]))
+        fragmented_header_tokens = sum(len(token) == 1 for token in header_tokens)
+        if header_tokens and fragmented_header_tokens / len(header_tokens) >= 0.3:
+            return False
+        has_data_values = sum(
+            bool(re.search(r"\d|\b(?:yes|no|on|off|model|rating|voltage|current)\b", cell, re.I))
+            for cell in populated_cells
+        ) >= 2
+        if len(rows) < 3 and not has_data_values:
+            return False
+    return True
+
+
 def _extract_tables(page):
     """Try ruled then borderless tables without indexing competing layouts."""
     strategies = [
@@ -92,7 +135,7 @@ def _extract_tables(page):
     # Stop after the first strategy that finds usable tables. Running the text
     # strategy together with a successful ruled-table strategy produces several
     # differently split copies of the same specifications and floods retrieval.
-    for table_settings in strategies:
+    for strategy_index, table_settings in enumerate(strategies):
         tables, signatures = [], set()
         try:
             extracted = page.extract_tables(table_settings=table_settings) or []
@@ -105,6 +148,11 @@ def _extract_tables(page):
                 if row and any((cell or "").strip() for cell in row)
             )
             if len(normalized) < 2 or normalized in signatures:
+                continue
+            if not _is_usable_table(
+                normalized,
+                borderless=strategy_index == len(strategies) - 1,
+            ):
                 continue
             signatures.add(normalized)
             tables.append(table)
@@ -434,12 +482,28 @@ def chunk_pages(pages: list[PdfPage]) -> list[PdfChunk]:
     """Chunk each page separately so retrieval can retain reliable citations."""
     chunks: list[PdfChunk] = []
     for page in pages:
-        for content in chunk_text(page.text):
-            match = re.match(r"Section:\s*([^\n]+)", content, flags=re.I)
-            chunks.append(PdfChunk(
-                content=content,
-                page_number=page.page_number,
-                section_heading=match.group(1).strip() if match else "",
-            ))
+        # Keep generated OCR/vision descriptions separate from native PDF text.
+        # This lets retrieval lower their authority for ordinary numeric specs.
+        segments = re.split(
+            r"(?=^\[(?:OCR|Visual page extraction|Image extraction)\]\s*$)",
+            page.text,
+            flags=re.M,
+        )
+        for segment in (item.strip() for item in segments if item.strip()):
+            if segment.startswith("[Visual page extraction]") or segment.startswith("[Image extraction]"):
+                evidence_type, confidence = "vision", 0.65
+            elif segment.startswith("[OCR]"):
+                evidence_type, confidence = "ocr", 0.8
+            else:
+                evidence_type, confidence = "text", 1.0
+            for content in chunk_text(segment):
+                match = re.match(r"Section:\s*([^\n]+)", content, flags=re.I)
+                chunks.append(PdfChunk(
+                    content=content,
+                    page_number=page.page_number,
+                    section_heading=match.group(1).strip() if match else "",
+                    evidence_type=evidence_type,
+                    evidence_confidence=confidence,
+                ))
     return chunks
 

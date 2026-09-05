@@ -27,6 +27,9 @@ _NON_MODEL_PREFIXES = {
 _NON_MODEL_CODES = re.compile(
     r"^(?:E|F|ERR|ERROR)\d{1,4}$|"
     r"^(?:IP|UL|IEC|IEEE|ISO|FCC|CE|ROHS|RS|RJ|USB|COM|MODBUS)\d+[A-Z0-9]*$|"
+    r"^(?:NFPA|NEC|ANSI|CSA|DIN|ETL|ATEX|MS|MD)\d+[A-Z0-9]*$|"
+    r"^(?:JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\d+[A-Z0-9]*$|"
+    r"^(?:AGM|EARTH|LVD)\d+[A-Z0-9]*$|"
     r"^(?:V|VAC|VDC|A|AMP|W|KW|HZ|AH|MAH)\d+[A-Z0-9]*$"
 )
 

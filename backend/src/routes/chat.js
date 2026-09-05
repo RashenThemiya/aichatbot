@@ -365,13 +365,13 @@ router.post("/", async (req, res) => {
     }
 
     const ragStarted = nowMs();
+    const ragContext = ragClient.buildConversationRagContext(
+      conversation.messages.slice(0, -1)
+    );
     const ragResult = await ragClient.queryKnowledge({
       companyId: company._id.toString(),
       question: preprocessed.question,
-      history: conversation.messages
-        .slice(0, -1)
-        .slice(-16)
-        .map((item) => `${item.role}: ${item.content}`),
+      ...ragContext,
     });
     timingsMs.ragService = nowMs() - ragStarted;
 
