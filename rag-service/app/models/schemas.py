@@ -28,6 +28,8 @@ class QueryRequest(BaseModel):
     top_k: int | None = None
     history: list[str] = Field(default_factory=list)
     preferred_document_ids: list[str] = Field(default_factory=list)
+    preferred_product_names: list[str] = Field(default_factory=list)
+    preferred_model_ids: list[str] = Field(default_factory=list)
 
 
 class SourceChunk(BaseModel):

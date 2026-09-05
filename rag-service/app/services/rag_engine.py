@@ -14,9 +14,9 @@ from app.models.schemas import (
     SourceChunk,
 )
 from app.services.chroma_store import ChromaStore
-from app.services.model_ids import extract_model_ids
+from app.services.model_ids import extract_model_ids, normalize_model_id
 from app.services.pdf_processor import chunk_pages, extract_pages_from_pdf
-from app.services.product_names import extract_product_names
+from app.services.product_names import extract_product_names, normalize_product_name
 
 SYSTEM_PROMPT = """You are a customer support and product recommendation assistant. Answer using the provided context from company documents.
 
@@ -422,6 +422,9 @@ class RAGEngine:
         # voltages are supported"), so do not rely only on a prefix match.
         if re.search(
             r"\bself[- ]?consumption\b|"
+            r"\b(?:ambient|operating|storage|working)\s+temperature(?:\s+range)?\b|"
+            r"\b(?:temperature|humidity|efficiency|waveform|dimensions?|weight|"
+            r"warranty|frequency|voltage|current|power)\s+range\b|"
             r"^what\s+(?:(?:is|are)\s+)?(?:the\s+)?(?:purpose|safety\s+rule|"
             r"function|benefit)\b|"
             r"\bon\s+(?:[a-z0-9-]+\s+)?models?\b|"
@@ -439,7 +442,8 @@ class RAGEngine:
         return bool(re.match(
             r"^(?:what|which)\s+(?:(?:is|are|was|were)\s+)?(?:the\s+)?"
             r"(?:continuous|peak|rated|maximum|minimum|available|supported|"
-            r"ac|dc|input|output|power|voltage|current|rating|versions?|models?|"
+            r"ambient|operating|storage|working|surge|temperature|efficiency|"
+            r"waveform|ac|dc|input|output|power|voltage|current|rating|versions?|models?|"
             r"dimensions?|weight|frequency|warranty|ports?|fuse|error)\b|"
             r"^how\s+(?:much|many|long|wide|high|fast|heavy)\b|"
             r"^(?:does|do|can|could|is|are|will|would|has|have)\s+(?:the\s+)?"
@@ -669,6 +673,8 @@ class RAGEngine:
         top_k: int | None = None,
         history: list[str] | None = None,
         preferred_document_ids: list[str] | None = None,
+        preferred_product_names: list[str] | None = None,
+        preferred_model_ids: list[str] | None = None,
     ) -> QueryResponse:
         query_started = perf_counter()
         timings: dict[str, int] = {}
@@ -720,12 +726,26 @@ class RAGEngine:
         base_standalone_question = self._standalone_question(question, scoped_history)
         mark("standalone_question", started)
         explicit_model_ids = extract_model_ids(question)
-        required_model_ids = explicit_model_ids or extract_model_ids(
-            base_standalone_question
+        preferred_models = {
+            normalized
+            for item in (preferred_model_ids or [])
+            if (normalized := normalize_model_id(item))
+        }
+        required_model_ids = (
+            explicit_model_ids
+            or extract_model_ids(base_standalone_question)
+            or (preferred_models if scoped_history else set())
         )
         explicit_product_names = extract_product_names(question)
-        required_product_names = explicit_product_names or extract_product_names(
-            base_standalone_question
+        preferred_products = {
+            normalized
+            for item in (preferred_product_names or [])
+            if (normalized := normalize_product_name(item))
+        }
+        required_product_names = (
+            explicit_product_names
+            or extract_product_names(base_standalone_question)
+            or (preferred_products if scoped_history else set())
         )
         if not required_product_names and scoped_history:
             required_product_names = extract_product_names("\n".join(scoped_history))
@@ -739,10 +759,16 @@ class RAGEngine:
             else set()
         )
         retrieval_stats["model_filter_applied"] = bool(required_model_ids)
+        retrieval_stats["explicit_model_ids"] = ", ".join(
+            sorted(explicit_model_ids)
+        )
         retrieval_stats["required_model_ids"] = ", ".join(
             sorted(required_model_ids)
         )
         retrieval_stats["product_filter_applied"] = bool(required_product_names)
+        retrieval_stats["explicit_product_names"] = ", ".join(
+            sorted(explicit_product_names)
+        )
         retrieval_stats["required_product_names"] = ", ".join(
             sorted(required_product_names)
         )
@@ -967,6 +993,7 @@ class RAGEngine:
                 ),
             )
         if not retrieved:
+            timings["total"] = int((perf_counter() - query_started) * 1000)
             return QueryResponse(
                 answer=(
                     "I couldn't find enough reliable information to answer that confidently. "
@@ -974,6 +1001,10 @@ class RAGEngine:
                 ),
                 sources=[],
                 suggestions=[],
+                diagnostics=QueryDiagnostics(
+                    timings_ms=timings,
+                    retrieval=retrieval_stats,
+                ),
             )
 
         context_blocks = []
@@ -1107,6 +1138,7 @@ class RAGEngine:
                     "with me and I'll help you narrow it down."
                 )
             else:
+                timings["total"] = int((perf_counter() - query_started) * 1000)
                 return QueryResponse(
                     answer=(
                         "I couldn't find enough reliable information to answer that confidently. "
@@ -1114,6 +1146,10 @@ class RAGEngine:
                     ),
                     sources=[],
                     suggestions=[],
+                    diagnostics=QueryDiagnostics(
+                        timings_ms=timings,
+                        retrieval=retrieval_stats,
+                    ),
                 )
         cited_indices = {
             int(index)
@@ -1296,12 +1332,25 @@ class RAGEngine:
         }
         if not cited:
             return sorted(claims)
+        cited_document_ids = {
+            retrieved[index - 1].get("document_id", "")
+            for index in cited
+        }
+        # A specification table is commonly split into several chunks. An
+        # answer can correctly cite one row while another value from the same
+        # retrieved page lands in a neighbouring chunk. Verify against all
+        # retrieved evidence from the cited document(s), including expanded
+        # neighbour context, while still excluding unrelated documents.
+        supporting_chunks = [
+            chunk for chunk in retrieved
+            if chunk.get("document_id", "") in cited_document_ids
+        ]
         supporting_text = "\n".join(
-            retrieved[index - 1].get(
+            chunk.get(
                 "context_content",
-                retrieved[index - 1].get("content", ""),
+                chunk.get("content", ""),
             )
-            for index in sorted(cited)
+            for chunk in supporting_chunks
         )
         source_claims = cls._numeric_claims(supporting_text)
         return sorted(claims - source_claims)

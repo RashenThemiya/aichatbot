@@ -64,6 +64,11 @@ const conversationSchema = new mongoose.Schema(
       type: [messageSchema],
       default: [],
     },
+    ragContext: {
+      productNames: { type: [String], default: [] },
+      modelIds: { type: [String], default: [] },
+      documentIds: { type: [String], default: [] },
+    },
   },
   { timestamps: true }
 );

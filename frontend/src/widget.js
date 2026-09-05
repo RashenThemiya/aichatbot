@@ -152,7 +152,13 @@ function messageNode(role, text, sources = [], feedbackOptions = null, suggestio
   if (sources.length) {
     const sourceBox = document.createElement("div");
     sourceBox.className = "ragw-sources";
-    sourceBox.textContent = `Sources: ${sources.map((source) => source.documentName).filter(Boolean).join(", ")}`;
+    const sourceLabels = [...new Set(sources.map((source) => {
+      if (!source.documentName) return "";
+      return source.pageNumber
+        ? `${source.documentName} (page ${source.pageNumber})`
+        : source.documentName;
+    }).filter(Boolean))];
+    sourceBox.textContent = `Sources: ${sourceLabels.join(", ")}`;
     node.appendChild(sourceBox);
   }
   if (role !== "user" && suggestions.length) {

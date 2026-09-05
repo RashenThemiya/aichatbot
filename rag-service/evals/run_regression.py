@@ -36,6 +36,9 @@ def main() -> int:
             "company_id": company_id,
             "question": case["question"],
             "history": case.get("history", []),
+            "preferred_document_ids": case.get("preferred_document_ids", []),
+            "preferred_product_names": case.get("preferred_product_names", []),
+            "preferred_model_ids": case.get("preferred_model_ids", []),
         }).encode("utf-8")
         http_request = request.Request(
             f"{base_url}/query",

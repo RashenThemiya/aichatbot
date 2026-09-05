@@ -76,6 +76,17 @@ function FormattedAnswer({ text }) {
   );
 }
 
+function sourceLabel(source) {
+  if (!source?.documentName) return "";
+  return source.pageNumber
+    ? `${source.documentName} (page ${source.pageNumber})`
+    : source.documentName;
+}
+
+function sourceSummary(sources = []) {
+  return [...new Set(sources.map(sourceLabel).filter(Boolean))].join(", ");
+}
+
 function ChatDiagnostics({ diagnostics }) {
   if (!diagnostics) return null;
 
@@ -1495,7 +1506,7 @@ ${widgetScriptSrc()}`;
                       <FormattedAnswer text={message.content} />
                       {message.sources?.length > 0 && (
                         <div className="pt-2 mt-2 text-xs border-t border-slate-200 text-slate-500">
-                          Sources: {message.sources.map((source) => source.documentName).filter(Boolean).join(", ")}
+                          Sources: {sourceSummary(message.sources)}
                         </div>
                       )}
                       {message.role === "assistant" && message.suggestions?.length > 0 && (
@@ -2816,7 +2827,7 @@ ${widgetScriptSrc()}`;
                         {(chatResult.sources || []).map((source, index) => (
                           <div key={`${source.documentId}-${index}`} className="p-3 border rounded border-slate-200 bg-slate-50">
                             <div className="flex items-center justify-between gap-2">
-                              <span className="text-xs font-semibold truncate text-slate-700">{source.documentName}</span>
+                              <span className="text-xs font-semibold truncate text-slate-700">{sourceLabel(source)}</span>
                               <span className="text-xs text-slate-500">{source.score}</span>
                             </div>
                             <p className="mt-2 text-xs leading-5 line-clamp-3 text-slate-600">{source.content}</p>
@@ -2922,7 +2933,7 @@ ${widgetScriptSrc()}`;
                               <div className="mt-3 space-y-2">
                                 {message.sources.map((source, sourceIndex) => (
                                   <div key={sourceIndex} className="p-2 rounded bg-slate-50 text-slate-700">
-                                    <div className="text-xs font-semibold">{source.documentName}</div>
+                                    <div className="text-xs font-semibold">{sourceLabel(source)}</div>
                                     <div className="mt-1 text-xs leading-5">{source.content}</div>
                                   </div>
                                 ))}

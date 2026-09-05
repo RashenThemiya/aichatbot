@@ -197,6 +197,19 @@ async function mergeGuestConversation({
 
   if (guestConversation.messages?.length) {
     targetConversation.messages.push(...guestConversation.messages);
+    // The guest messages are appended as the newest conversation turns, so
+    // their active knowledge-base topic must move with them as well.
+    if (
+      guestConversation.ragContext?.productNames?.length
+      || guestConversation.ragContext?.modelIds?.length
+      || guestConversation.ragContext?.documentIds?.length
+    ) {
+      targetConversation.ragContext = {
+        productNames: [...(guestConversation.ragContext.productNames || [])],
+        modelIds: [...(guestConversation.ragContext.modelIds || [])],
+        documentIds: [...(guestConversation.ragContext.documentIds || [])],
+      };
+    }
   }
 
   await targetConversation.save();
@@ -366,7 +379,8 @@ router.post("/", async (req, res) => {
 
     const ragStarted = nowMs();
     const ragContext = ragClient.buildConversationRagContext(
-      conversation.messages.slice(0, -1)
+      conversation.messages.slice(0, -1),
+      conversation.ragContext
     );
     const ragResult = await ragClient.queryKnowledge({
       companyId: company._id.toString(),
@@ -387,6 +401,8 @@ router.post("/", async (req, res) => {
       cache: ragResult.diagnostics?.cache || { hit: false },
     };
     diagnostics.timingsMs.backendTotal = nowMs() - requestStarted;
+
+    ragClient.updateConversationRagContext(conversation, ragResult);
 
     conversation.messages.push({
       role: "assistant",

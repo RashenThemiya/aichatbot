@@ -47,6 +47,8 @@ function mapSources(sources) {
     documentName: source.document_name,
     content: source.content,
     score: source.score,
+    pageNumber: source.page_number,
+    sectionHeading: source.section_heading || "",
   }));
 }
 
@@ -167,7 +169,8 @@ async function createRagReply(incomingMessage) {
   }
 
   const ragContext = ragClient.buildConversationRagContext(
-    conversation.messages.slice(0, -1)
+    conversation.messages.slice(0, -1),
+    conversation.ragContext
   );
   const ragResult = await ragClient.queryKnowledge({
     companyId: company._id.toString(),
@@ -177,6 +180,7 @@ async function createRagReply(incomingMessage) {
 
   const sources = mapSources(ragResult.sources);
   const answer = ragResult.answer || "I could not find an answer for that yet.";
+  ragClient.updateConversationRagContext(conversation, ragResult);
 
   conversation.messages.push({
     role: "assistant",

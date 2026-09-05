@@ -58,6 +58,22 @@
     "forbidden_facts": []
   },
   {
+    "id": "suresine_temperature_followup_after_fallbacks",
+    "question": "What is the operating temperature range?",
+    "history": [
+      "user: What is the SureSine inverter?",
+      "assistant: The SureSine is a pure sine wave inverter.",
+      "user: What AC output versions are available?",
+      "assistant: I couldn't confirm the exact value.",
+      "user: Can you check that again?",
+      "assistant: I still couldn't confirm the exact value."
+    ],
+    "preferred_product_names": ["suresine"],
+    "expected_facts": ["-40", "+45"],
+    "forbidden_facts": ["+60", "T4", "T5"],
+    "forbidden_sources": ["operation-manual-.pdf"]
+  },
+  {
     "id": "ic244090i_mounting_drawing",
     "question": "I am preparing to install my IC244090i inverter on a custom mounting board. Where are the mounting holes located on this specific unit?",
     "expected_model": "IC244090i",

@@ -4,6 +4,51 @@ from app.services.rag_engine import RAGEngine
 
 
 class HistoryAndNumericGuardrailTests(unittest.TestCase):
+    def test_persisted_topic_scopes_a_generic_specification_follow_up(self):
+        calls = []
+
+        class EmptyStore:
+            @staticmethod
+            def company_has_documents(_company_id):
+                return True
+
+            @staticmethod
+            def hybrid_query(_company_id, _question, _limit, **kwargs):
+                calls.append(kwargs)
+                return []
+
+            @staticmethod
+            def expand_neighbors(_company_id, retrieved, _radius, **_kwargs):
+                return retrieved
+
+        engine = RAGEngine.__new__(RAGEngine)
+        engine.store = EmptyStore()
+        engine.cross_encoder = None
+        engine._standalone_question = lambda question, _history: question
+        engine._multilingual_variants = lambda question: [question]
+        engine._expand_query = lambda question: [question]
+        engine._rerank = lambda _question, candidates, _limit: candidates
+
+        response = engine.query(
+            "company-id",
+            "What is the operating temperature range?",
+            history=[
+                "user: What is the SureSine inverter?",
+                "assistant: It is a pure sine wave inverter.",
+            ],
+            preferred_document_ids=["suresine-datasheet"],
+            preferred_product_names=["suresine"],
+        )
+
+        self.assertTrue(calls)
+        self.assertTrue(all(
+            call["required_product_names"] == {"suresine"}
+            and call["allowed_document_ids"] == {"suresine-datasheet"}
+            for call in calls
+        ))
+        self.assertTrue(response.diagnostics.retrieval["document_scope_applied"])
+        self.assertTrue(response.diagnostics.retrieval["product_filter_applied"])
+
     def test_explicit_new_model_drops_previous_product_history(self):
         history = [
             "user: What fuse does IC121040 use?",
@@ -71,6 +116,16 @@ class HistoryAndNumericGuardrailTests(unittest.TestCase):
     def test_controller_self_consumption_question_requires_history(self):
         self.assertTrue(RAGEngine._question_requires_history(
             "What is the controller self-consumption?"
+        ))
+
+    def test_operating_temperature_question_requires_history(self):
+        self.assertTrue(RAGEngine._question_requires_history(
+            "What is the operating temperature range?"
+        ))
+
+    def test_generic_efficiency_question_requires_history(self):
+        self.assertTrue(RAGEngine._question_requires_history(
+            "What is the peak efficiency?"
         ))
 
     def test_generic_l_model_purpose_question_requires_history(self):
@@ -178,6 +233,44 @@ class HistoryAndNumericGuardrailTests(unittest.TestCase):
         )
 
         self.assertEqual(unsupported, [])
+
+    def test_numeric_claim_can_use_another_retrieved_chunk_from_cited_document(self):
+        retrieved = [
+            {
+                "document_id": "suresine",
+                "content": "Versions: SI-300-115V-UL and SI-300-220V.",
+            },
+            {
+                "document_id": "suresine",
+                "content": "Two versions: 220VAC at 50 Hz or 115VAC at 60 Hz.",
+            },
+        ]
+
+        unsupported = RAGEngine._unsupported_numeric_claims(
+            "The outputs are 115 VAC at 60 Hz and 220 VAC at 50 Hz [Source 1].",
+            retrieved,
+        )
+
+        self.assertEqual(unsupported, [])
+
+    def test_numeric_claim_cannot_use_an_uncited_other_document(self):
+        retrieved = [
+            {
+                "document_id": "correct-product",
+                "content": "The fuse rating is 450 A.",
+            },
+            {
+                "document_id": "other-product",
+                "content": "The fuse rating is 300 A.",
+            },
+        ]
+
+        unsupported = RAGEngine._unsupported_numeric_claims(
+            "The fuse rating is 300 A [Source 1].",
+            retrieved,
+        )
+
+        self.assertEqual(unsupported, [("", "300", "a")])
 
     def test_unicode_comparators_and_dimensions_are_normalized(self):
         claims = RAGEngine._numeric_claims(

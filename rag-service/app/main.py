@@ -104,6 +104,8 @@ def query_knowledge(request: QueryRequest):
             top_k=request.top_k,
             history=request.history,
             preferred_document_ids=request.preferred_document_ids,
+            preferred_product_names=request.preferred_product_names,
+            preferred_model_ids=request.preferred_model_ids,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Query failed: {str(e)}")
