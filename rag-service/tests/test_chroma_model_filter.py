@@ -37,6 +37,74 @@ class ChromaModelFilterTests(unittest.TestCase):
             "Available model: SS-10-12V",
         )
 
+    def test_ingestion_marks_model_free_manual_instructions_as_shared(self):
+        client = chromadb.EphemeralClient()
+        collection = client.create_collection("shared_ingestion_test")
+        store = ChromaStore.__new__(ChromaStore)
+        store._get_collection = lambda _company_id: collection
+        store._embed = lambda texts: [[1.0, 0.0] for _text in texts]
+
+        store.add_document_chunks(
+            "company",
+            "abso-manual",
+            "Abso-AC-Charger-REV-C.pdf",
+            [
+                PdfChunk(
+                    content="Models AC1220, AC1240, and AC1260",
+                    page_number=1,
+                ),
+                PdfChunk(
+                    content="Silent Mode disables the cooling fan for 12 hours.",
+                    page_number=6,
+                ),
+            ],
+        )
+
+        stored = collection.get(include=["documents", "metadatas"])
+        by_content = dict(zip(stored["documents"], stored["metadatas"]))
+        shared = by_content["Silent Mode disables the cooling fan for 12 hours."]
+
+        self.assertEqual(shared["model_scope"], "shared")
+        self.assertEqual(shared["model_ids"], "")
+        self.assertEqual(
+            set(shared["document_model_ids"].split(",")),
+            {"AC1220", "AC1240", "AC1260"},
+        )
+
+    def test_model_specific_page_continuation_does_not_become_shared(self):
+        client = chromadb.EphemeralClient()
+        collection = client.create_collection("model_page_scope_test")
+        store = ChromaStore.__new__(ChromaStore)
+        store._get_collection = lambda _company_id: collection
+        store._embed = lambda texts: [[1.0, 0.0] for _text in texts]
+
+        store.add_document_chunks(
+            "company",
+            "abso-manual",
+            "Abso-AC-Charger-REV-C.pdf",
+            [
+                PdfChunk(
+                    content="Models AC1240 and AC1260",
+                    page_number=1,
+                ),
+                PdfChunk(
+                    content="AC1260 maximum charging current specifications.",
+                    page_number=9,
+                ),
+                PdfChunk(
+                    content="The maximum charging current is 60 A.",
+                    page_number=9,
+                ),
+            ],
+        )
+
+        stored = collection.get(include=["documents", "metadatas"])
+        by_content = dict(zip(stored["documents"], stored["metadatas"]))
+        continuation = by_content["The maximum charging current is 60 A."]
+
+        self.assertEqual(continuation["model_scope"], "explicit")
+        self.assertEqual(continuation["model_ids"], "AC1260")
+
     def test_inactive_and_other_model_chunks_are_excluded_before_ranking(self):
         client = chromadb.EphemeralClient()
         collection = client.create_collection("model_filter_test")
@@ -134,6 +202,128 @@ class ChromaModelFilterTests(unittest.TestCase):
         self.assertEqual(
             {result["document_id"] for result in results},
             {"sunsaver-manual"},
+        )
+
+    def test_shared_instructions_are_allowed_but_other_model_specs_are_rejected(self):
+        client = chromadb.EphemeralClient()
+        collection = client.create_collection("shared_model_filter_test")
+        collection.add(
+            ids=["catalog", "shared", "other-model", "other-catalog", "other-shared"],
+            embeddings=[[1.0, 0.0] for _index in range(5)],
+            documents=[
+                "Models AC1240 and AC1260",
+                "Silent Mode disables the cooling fan for 12 hours.",
+                "AC1260 has a maximum charging current of 60 A.",
+                "Model AC2430",
+                "Silent Mode instructions for the other manual.",
+            ],
+            metadatas=[
+                {
+                    "document_id": "abso-manual",
+                    "document_name": "Abso manual.pdf",
+                    "page_number": 1,
+                    "model_ids": "AC1240,AC1260",
+                    "document_model_ids": "AC1240,AC1260",
+                    "model_scope": "explicit",
+                    "is_active": True,
+                },
+                {
+                    "document_id": "abso-manual",
+                    "document_name": "Abso manual.pdf",
+                    "page_number": 6,
+                    "model_ids": "",
+                    "document_model_ids": "AC1240,AC1260",
+                    "model_scope": "shared",
+                    "is_active": True,
+                },
+                {
+                    "document_id": "abso-manual",
+                    "document_name": "Abso manual.pdf",
+                    "page_number": 9,
+                    "model_ids": "AC1260",
+                    "document_model_ids": "AC1240,AC1260",
+                    "model_scope": "explicit",
+                    "is_active": True,
+                },
+                {
+                    "document_id": "other-manual",
+                    "document_name": "Other manual.pdf",
+                    "page_number": 1,
+                    "model_ids": "AC2430",
+                    "document_model_ids": "AC2430",
+                    "model_scope": "explicit",
+                    "is_active": True,
+                },
+                {
+                    "document_id": "other-manual",
+                    "document_name": "Other manual.pdf",
+                    "page_number": 6,
+                    "model_ids": "",
+                    "document_model_ids": "AC2430",
+                    "model_scope": "shared",
+                    "is_active": True,
+                },
+            ],
+        )
+
+        store = ChromaStore.__new__(ChromaStore)
+        store._get_collection = lambda _company_id: collection
+        store._embed = lambda _texts: [[1.0, 0.0]]
+
+        results = store.hybrid_query(
+            "company",
+            "Can I mute the fan on AC1240?",
+            10,
+            required_model_ids={"AC1240"},
+        )
+        contents = {result["content"] for result in results}
+
+        self.assertIn("Silent Mode disables the cooling fan for 12 hours.", contents)
+        self.assertNotIn("AC1260 has a maximum charging current of 60 A.", contents)
+        self.assertNotIn("Silent Mode instructions for the other manual.", contents)
+
+    def test_legacy_index_infers_shared_chunks_from_early_model_catalog(self):
+        client = chromadb.EphemeralClient()
+        collection = client.create_collection("legacy_shared_model_filter_test")
+        collection.add(
+            ids=["catalog", "shared"],
+            embeddings=[[1.0, 0.0], [1.0, 0.0]],
+            documents=[
+                "Models AC1240 and AC1260",
+                "Silent Mode disables the cooling fan.",
+            ],
+            metadatas=[
+                {
+                    "document_id": "abso-manual",
+                    "document_name": "Abso manual.pdf",
+                    "page_number": 1,
+                    "model_ids": "AC1240,AC1260",
+                    "is_active": True,
+                },
+                {
+                    "document_id": "abso-manual",
+                    "document_name": "Abso manual.pdf",
+                    "page_number": 6,
+                    "model_ids": "",
+                    "is_active": True,
+                },
+            ],
+        )
+
+        store = ChromaStore.__new__(ChromaStore)
+        store._get_collection = lambda _company_id: collection
+        store._embed = lambda _texts: [[1.0, 0.0]]
+
+        results = store.hybrid_query(
+            "company",
+            "AC1240 silent fan mode",
+            10,
+            required_model_ids={"AC1240"},
+        )
+
+        self.assertIn(
+            "Silent Mode disables the cooling fan.",
+            {result["content"] for result in results},
         )
 
 

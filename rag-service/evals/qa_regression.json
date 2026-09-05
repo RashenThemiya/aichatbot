@@ -81,6 +81,13 @@
     "forbidden_facts": []
   },
   {
+    "id": "ac1240_shared_silent_mode",
+    "question": "I sleep near my AC1240 Abso Charger and the cooling fan is too loud at night. Is there a way to mute it?",
+    "expected_source": "Abso-AC-Charger-REV-C.pdf",
+    "expected_facts": ["Silent Mode", "SET", "3 seconds", "12 hours"],
+    "forbidden_facts": ["couldn't find enough", "60A"]
+  },
+  {
     "id": "sunsaver_models_keep_display_format",
     "question": "What SunSaver models are available?",
     "expected_source": "operation-manual-.pdf",

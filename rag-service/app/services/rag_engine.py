@@ -946,7 +946,14 @@ class RAGEngine:
         if required_model_ids:
             candidates = [
                 chunk for chunk in candidates
-                if set(chunk.get("model_ids", [])) & required_model_ids
+                if (
+                    set(chunk.get("model_ids", [])) & required_model_ids
+                    or (
+                        chunk.get("model_scope") == "shared"
+                        and set(chunk.get("document_model_ids", []))
+                        & required_model_ids
+                    )
+                )
             ]
         if not self._is_visual_evidence_question(standalone_question):
             reliable_candidates = [

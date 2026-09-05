@@ -5,15 +5,15 @@ os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
 import chromadb
 import math
 import re
-from collections import Counter
+from collections import Counter, defaultdict
 from chromadb.config import Settings as ChromaSettings
 from openai import OpenAI
 
 from app.config import settings
 from app.services.model_ids import (
+    deserialize_model_ids,
     extract_model_ids,
     item_model_ids,
-    matches_model_ids,
     serialize_model_ids,
 )
 from app.services.product_names import (
@@ -58,6 +58,76 @@ class ChromaStore:
             embeddings.extend(item.embedding for item in response.data)
         return embeddings
 
+    @staticmethod
+    def _document_model_catalogs(pairs: list[tuple[str, dict]]) -> dict[str, set[str]]:
+        """Find models a document genuinely covers, including legacy indexes."""
+        grouped: dict[str, list[tuple[str, dict]]] = defaultdict(list)
+        for document, metadata in pairs:
+            document_id = str(metadata.get("document_id", ""))
+            if document_id:
+                grouped[document_id].append((document, metadata))
+
+        catalogs: dict[str, set[str]] = {}
+        for document_id, document_pairs in grouped.items():
+            persisted = set()
+            for _document, metadata in document_pairs:
+                persisted.update(deserialize_model_ids(
+                    metadata.get("document_model_ids", "")
+                ))
+            if persisted:
+                catalogs[document_id] = persisted
+                continue
+
+            filename_ids = extract_model_ids(
+                document_pairs[0][1].get("document_name", "")
+            )
+            if filename_ids:
+                catalogs[document_id] = filename_ids
+                continue
+
+            # Legacy indexes do not have document_model_ids. Models shown in
+            # the first three pages or repeated on multiple pages are treated
+            # as models covered by the manual. A late one-off accessory code
+            # therefore cannot unlock all shared instructions in the document.
+            early_ids: set[str] = set()
+            pages_by_model: dict[str, set[object]] = defaultdict(set)
+            for document, metadata in document_pairs:
+                model_ids = item_model_ids(document, metadata)
+                page_number = metadata.get("page_number")
+                try:
+                    is_early_page = int(page_number) <= 3
+                except (TypeError, ValueError):
+                    is_early_page = False
+                if is_early_page:
+                    early_ids.update(model_ids)
+                page_key = page_number if page_number is not None else metadata.get("chunk_index")
+                for model_id in model_ids:
+                    pages_by_model[model_id].add(page_key)
+            catalogs[document_id] = early_ids | {
+                model_id
+                for model_id, pages in pages_by_model.items()
+                if len(pages) >= 2
+            }
+        return catalogs
+
+    @staticmethod
+    def _chunk_matches_required_model(
+        document: str,
+        metadata: dict,
+        required: set[str],
+        document_catalog: set[str],
+    ) -> bool:
+        if not required:
+            return True
+        local_model_ids = item_model_ids(document, metadata)
+        if local_model_ids & required:
+            return True
+        if local_model_ids:
+            return False
+        # A model-free chunk is shared only inside a manual whose conservative
+        # document catalog includes the requested model.
+        return bool(document_catalog & required)
+
     def add_document_chunks(
         self,
         company_id: str,
@@ -74,20 +144,66 @@ class ChromaStore:
         collection = self._get_collection(company_id)
         raw_contents = [chunk.content for chunk in chunks]
         name_model_ids = extract_model_ids(document_name)
+        local_model_ids_by_chunk = [
+            name_model_ids or extract_model_ids(
+                f"{getattr(chunk, 'section_heading', '')}\n{chunk.content}"
+            )
+            for chunk in chunks
+        ]
+        pages_by_model: dict[str, set[object]] = defaultdict(set)
+        early_model_ids: set[str] = set()
+        for index, (chunk, local_model_ids) in enumerate(
+            zip(chunks, local_model_ids_by_chunk)
+        ):
+            try:
+                is_early_page = int(chunk.page_number) <= 3
+            except (TypeError, ValueError):
+                is_early_page = False
+            if is_early_page:
+                early_model_ids.update(local_model_ids)
+            page_key = chunk.page_number if chunk.page_number is not None else index
+            for model_id in local_model_ids:
+                pages_by_model[model_id].add(page_key)
+        document_model_ids = name_model_ids or (
+            early_model_ids
+            | {
+                model_id
+                for model_id, pages in pages_by_model.items()
+                if len(pages) >= 2
+            }
+        )
+        page_model_ids: dict[object, set[str]] = defaultdict(set)
+        for index, (chunk, local_model_ids) in enumerate(
+            zip(chunks, local_model_ids_by_chunk)
+        ):
+            page_key = chunk.page_number if chunk.page_number is not None else index
+            page_model_ids[page_key].update(local_model_ids & document_model_ids)
+        for index, chunk in enumerate(chunks):
+            if local_model_ids_by_chunk[index] or not document_model_ids:
+                continue
+            page_key = chunk.page_number if chunk.page_number is not None else index
+            models_on_page = page_model_ids.get(page_key, set())
+            # A continuation chunk on a page dedicated to only part of the
+            # catalog inherits that page's model scope. It must not become a
+            # shared instruction for every model in the manual.
+            if models_on_page and models_on_page != document_model_ids:
+                local_model_ids_by_chunk[index] = set(models_on_page)
         document_product_names = extract_product_names(
             f"{document_name}\n{' '.join(raw_contents)}"
         )
         embedding_contents = []
-        for chunk in chunks:
-            local_model_ids = name_model_ids or extract_model_ids(
-                f"{getattr(chunk, 'section_heading', '')}\n{chunk.content}"
-            )
+        for chunk, local_model_ids in zip(chunks, local_model_ids_by_chunk):
             local_product_names = extract_product_names(chunk.content)
             if len(document_product_names) == 1:
                 local_product_names = document_product_names
             labels = [f"Document: {document_name}"]
             if local_model_ids:
                 labels.append(f"Product model: {', '.join(sorted(local_model_ids))}")
+            elif document_model_ids:
+                labels.append(
+                    "Shared instructions for product models: "
+                    + ", ".join(sorted(document_model_ids))
+                )
             if local_product_names:
                 labels.append(f"Product family: {', '.join(sorted(local_product_names))}")
             section_heading = getattr(chunk, "section_heading", "")
@@ -116,11 +232,16 @@ class ChromaStore:
                 "document_version": document_version,
                 "effective_date": effective_date,
                 "is_active": is_active,
-                "model_ids": serialize_model_ids(
-                    name_model_ids
-                    or extract_model_ids(
-                        f"{getattr(chunk, 'section_heading', '')}\n{chunk.content}"
-                    )
+                "model_ids": serialize_model_ids(local_model_ids_by_chunk[i]),
+                "document_model_ids": serialize_model_ids(document_model_ids),
+                "model_scope": (
+                    "document"
+                    if name_model_ids
+                    else "explicit"
+                    if local_model_ids_by_chunk[i]
+                    else "shared"
+                    if document_model_ids
+                    else "unscoped"
                 ),
                 "product_names": serialize_product_names(
                     document_product_names
@@ -212,6 +333,7 @@ class ChromaStore:
         allowed_documents = allowed_document_ids or set()
         where = {"is_active": True}
         eligible_count = count
+        model_catalogs: dict[str, set[str]] = {}
         if required or required_products or allowed_documents:
             all_items = collection.get(include=["documents", "metadatas"])
             pairs = [
@@ -222,6 +344,7 @@ class ChromaStore:
                 )
                 if meta.get("document_id") and meta.get("is_active", True)
             ]
+            model_catalogs = self._document_model_catalogs(pairs)
             eligible_document_ids = {
                 meta.get("document_id", "") for _doc, meta in pairs
             }
@@ -237,7 +360,10 @@ class ChromaStore:
                 eligible_document_ids &= {
                     meta.get("document_id", "")
                     for doc, meta in pairs
-                    if matches_model_ids(doc, meta, required)
+                    if (
+                        item_model_ids(doc, meta) & required
+                        or model_catalogs.get(meta.get("document_id", ""), set()) & required
+                    )
                 }
             eligible_document_ids = sorted(eligible_document_ids)
             if not eligible_document_ids:
@@ -246,7 +372,12 @@ class ChromaStore:
                 1
                 for doc, meta in pairs
                 if meta.get("document_id", "") in eligible_document_ids
-                and matches_model_ids(doc, meta, required)
+                and self._chunk_matches_required_model(
+                    doc,
+                    meta,
+                    required,
+                    model_catalogs.get(meta.get("document_id", ""), set()),
+                )
             )
             document_filter = (
                 {"document_id": eligible_document_ids[0]}
@@ -272,8 +403,18 @@ class ChromaStore:
             results["metadatas"][0],
             results["distances"][0],
         ):
-            if not matches_model_ids(doc, meta, required):
+            document_catalog = model_catalogs.get(
+                meta.get("document_id", ""),
+                deserialize_model_ids(meta.get("document_model_ids", "")),
+            )
+            if not self._chunk_matches_required_model(
+                doc,
+                meta,
+                required,
+                document_catalog,
+            ):
                 continue
+            local_model_ids = item_model_ids(doc, meta)
             score = 1.0 / (1.0 + distance)
             chunks.append(
                 {
@@ -284,7 +425,11 @@ class ChromaStore:
                     "document_version": meta.get("document_version", "1"),
                     "effective_date": meta.get("effective_date", ""),
                     "is_active": meta.get("is_active", True),
-                    "model_ids": sorted(item_model_ids(doc, meta)),
+                    "model_ids": sorted(local_model_ids),
+                    "document_model_ids": sorted(document_catalog),
+                    "model_scope": meta.get("model_scope") or (
+                        "explicit" if local_model_ids else "shared"
+                    ),
                     "product_names": sorted(item_product_names(doc, meta)),
                     "evidence_type": meta.get("evidence_type", "text"),
                     "evidence_confidence": float(meta.get("evidence_confidence", 1.0)),
@@ -338,17 +483,24 @@ class ChromaStore:
             allowed_document_ids=allowed_documents,
         )
         all_items = collection.get(include=["documents", "metadatas"])
+        all_pairs = list(zip(all_items["documents"], all_items["metadatas"]))
+        model_catalogs = self._document_model_catalogs(all_pairs)
         product_document_ids = {
             meta.get("document_id", "")
-            for doc, meta in zip(all_items["documents"], all_items["metadatas"])
+            for doc, meta in all_pairs
             if meta.get("is_active", True)
             and matches_product_names(doc, meta, required_products)
         }
         eligible = [
             (doc, meta)
-            for doc, meta in zip(all_items["documents"], all_items["metadatas"])
+            for doc, meta in all_pairs
             if meta.get("is_active", True)
-            and matches_model_ids(doc, meta, required)
+            and self._chunk_matches_required_model(
+                doc,
+                meta,
+                required,
+                model_catalogs.get(meta.get("document_id", ""), set()),
+            )
             and (not allowed_documents or meta.get("document_id", "") in allowed_documents)
             and (not required_products or meta.get("document_id", "") in product_document_ids)
         ]
@@ -405,6 +557,8 @@ class ChromaStore:
             if not meta.get("is_active", True):
                 continue
             key = (meta.get("document_id", ""), doc)
+            local_model_ids = item_model_ids(raw_documents[index], meta)
+            document_catalog = model_catalogs.get(meta.get("document_id", ""), set())
             item = fused.setdefault(
                 key,
                 {
@@ -415,7 +569,11 @@ class ChromaStore:
                     "document_version": meta.get("document_version", "1"),
                     "effective_date": meta.get("effective_date", ""),
                     "is_active": meta.get("is_active", True),
-                    "model_ids": sorted(item_model_ids(raw_documents[index], meta)),
+                    "model_ids": sorted(local_model_ids),
+                    "document_model_ids": sorted(document_catalog),
+                    "model_scope": meta.get("model_scope") or (
+                        "explicit" if local_model_ids else "shared"
+                    ),
                     "product_names": sorted(item_product_names(raw_documents[index], meta)),
                     "evidence_type": meta.get("evidence_type", "text"),
                     "evidence_confidence": float(meta.get("evidence_confidence", 1.0)),
@@ -441,6 +599,11 @@ class ChromaStore:
                 0.0,
                 min(1.0, float(item.get("evidence_confidence", 1.0))),
             )
+            if required:
+                if set(item.get("model_ids", [])) & required:
+                    item["rank_score"] *= 1.03
+                elif item.get("model_scope") == "shared":
+                    item["rank_score"] *= 0.99
 
         return sorted(
             fused.values(),
@@ -471,13 +634,18 @@ class ChromaStore:
                     where={"document_id": document_id},
                     include=["documents", "metadatas"],
                 )
+                document_pairs = list(zip(data["documents"], data["metadatas"]))
                 cache[document_id] = {
                     meta.get("chunk_index", index): (doc, meta)
                     for index, (doc, meta) in enumerate(
-                        zip(data["documents"], data["metadatas"])
+                        document_pairs
                     )
                 }
+                cache[(document_id, "model_catalog")] = self._document_model_catalogs(
+                    document_pairs
+                ).get(document_id, set())
             document_chunks = cache[document_id]
+            document_catalog = cache[(document_id, "model_catalog")]
             matching_index = next(
                 (
                     index for index, (doc, _meta) in document_chunks.items()
@@ -496,10 +664,11 @@ class ChromaStore:
             ):
                 if index in document_chunks:
                     doc, meta = document_chunks[index]
-                    if not matches_model_ids(
+                    if not self._chunk_matches_required_model(
                         doc,
                         meta,
                         required_model_ids or set(),
+                        document_catalog,
                     ):
                         continue
                     if (
